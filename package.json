@@ -1,0 +1,28 @@
+{
+  "name": "telegram-ai-bridge",
+  "version": "0.3.1",
+  "description": "Telegram ↔ AI coding CLIs bridge. Chat with Kilo, Codex, Copilot, Gemini, and Claude Code from your phone.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/legate-dev/telegram-ai-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/legate-dev/telegram-ai-bridge/issues"
+  },
+  "homepage": "https://github.com/legate-dev/telegram-ai-bridge#readme",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --experimental-test-module-mocks --test 'test/*.test.js'"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^17.4.0",
+    "grammy": "^1.42.0"
+  }
+}

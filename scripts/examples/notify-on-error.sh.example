@@ -1,0 +1,116 @@
+#!/bin/bash
+#
+# notify-on-error.sh — AI-filtered log monitor that only pushes on real problems.
+#
+# Demonstrates the "notify only if meaningful" pattern: an AI CLI reads the
+# last N lines of a log file, decides whether there's anything worth the
+# operator's attention, and only pushes to Telegram if the answer is non-empty.
+# This avoids notification fatigue from cron spam.
+#
+# The key design point: the filter is the AI. The script itself has no rules
+# about what counts as "critical" — that decision is delegated to the prompt.
+# Change the prompt, change the notification sensitivity, no code changes.
+#
+# Setup:
+#   1. Dedicated push bot via @BotFather (see README.md → Proactive push)
+#   2. Export credentials:
+#        export TG_PUSH_BOT_TOKEN="1234567890:AABBcc..."
+#        export TG_PUSH_CHAT_ID="-1001234567890"
+#   3. Schedule via cron (runs every hour at :00):
+#        0 * * * *  /path/to/notify-on-error.sh /var/log/prod.log
+#   4. Or watch multiple logs by calling the script multiple times:
+#        0 * * * *  /path/to/notify-on-error.sh /var/log/prod.log
+#        0 * * * *  /path/to/notify-on-error.sh /var/log/postgres.log 500
+#
+# Usage:
+#   ./notify-on-error.sh <log-file> [lines-to-check]
+#
+# Arguments:
+#   log-file       — absolute path to the log file to monitor
+#   lines-to-check — how many tail lines to feed the AI (default 200)
+
+set -euo pipefail
+
+: "${TG_PUSH_BOT_TOKEN:?TG_PUSH_BOT_TOKEN must be set (see README.md)}"
+: "${TG_PUSH_CHAT_ID:?TG_PUSH_CHAT_ID must be set (see README.md)}"
+
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <log-file> [lines-to-check]" >&2
+  exit 1
+fi
+
+LOG_FILE="$1"
+LINES_TO_CHECK="${2:-200}"
+MONITOR_CLI="${MONITOR_CLI:-claude}"
+
+if [ ! -r "${LOG_FILE}" ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Log file not readable: ${LOG_FILE}" >&2
+  exit 1
+fi
+
+# Pull the last N lines. The AI will reason over this chunk only.
+LOG_CHUNK=$(tail -n "${LINES_TO_CHECK}" "${LOG_FILE}")
+
+# The prompt is the whole filter logic. Adjust to taste:
+# - Bump "critical" to "any" for more aggressive notifications
+# - Add specific error patterns you care about
+# - Change the response format (bullets, full sentences, etc.)
+PROMPT="You are a log monitoring assistant. Read the following ${LINES_TO_CHECK} lines
+from ${LOG_FILE}:
+
+---
+${LOG_CHUNK}
+---
+
+Decide: are there any CRITICAL issues in these logs that a sysadmin should
+investigate right now? Critical means: HTTP 5xx storms, panics, OOM kills,
+database connection failures, security alerts, service crashes.
+
+If YES, respond with a concise 3-line summary: what happened, rough time
+window, severity. No greetings, no explanations, just the summary.
+
+If NO (logs look normal, only info/warn messages, isolated 4xx errors, etc.),
+respond with literally nothing — an empty response. Do not say 'no issues',
+do not acknowledge, just output nothing."
+
+# Generate the analysis. Capture stdout only.
+case "${MONITOR_CLI}" in
+  claude)
+    ANALYSIS=$(claude -p "${PROMPT}" --output-format json 2>/dev/null | jq -r '.result // empty')
+    ;;
+  codex)
+    ANALYSIS=$(codex exec --json "${PROMPT}" 2>/dev/null | jq -r 'select(.type=="item.completed") | .item.text // empty' | head -c 3500)
+    ;;
+  *)
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Unknown MONITOR_CLI: ${MONITOR_CLI}" >&2
+    exit 1
+    ;;
+esac
+
+# Empty analysis → logs are fine → no notification. This is the "AI filter"
+# doing its job. Exit 0 silently (cron logs will still show the run).
+if [ -z "${ANALYSIS}" ] || [[ "${ANALYSIS}" =~ ^[[:space:]]*$ ]]; then
+  exit 0
+fi
+
+# Real problem detected — push it.
+HEADER="🚨 ${LOG_FILE}"
+FULL_TEXT="${HEADER}
+
+${ANALYSIS}"
+
+if [ "${#FULL_TEXT}" -gt 4000 ]; then
+  FULL_TEXT="${FULL_TEXT:0:4000}… [truncated]"
+fi
+
+HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+  -X POST "https://api.telegram.org/bot${TG_PUSH_BOT_TOKEN}/sendMessage" \
+  --data-urlencode "chat_id=${TG_PUSH_CHAT_ID}" \
+  --data-urlencode "text=${FULL_TEXT}")
+
+if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 300 ]; then
+  exit 0
+else
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Telegram sendMessage failed: HTTP ${HTTP_CODE}" >&2
+  exit 2
+fi

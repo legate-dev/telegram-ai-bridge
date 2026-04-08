@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# State
+sessions.json
+sessions.db
+sessions.db-wal
+sessions.db-shm
+
+# OS
+.DS_Store
+
+# Build
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# Design spec (private)
+telegram-bridge-architecture.md
+
+# Review artifacts
+review/
+thinking/
+research/
+
+# Memory
+.memory/

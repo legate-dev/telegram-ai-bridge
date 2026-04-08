@@ -1,0 +1,84 @@
+#!/bin/bash
+#
+# morning-briefing.sh — AI-generated morning briefing pushed to Telegram.
+#
+# Demonstrates the "AI-generated push" pattern: a local CLI (Claude, Codex,
+# Kilo, etc.) reasons about your day and produces a short briefing, which
+# is then pushed to Telegram via a dedicated push bot. The bridge is not
+# involved — this script is fully standalone.
+#
+# Setup:
+#   1. Dedicated push bot via @BotFather (see README.md → Proactive push)
+#   2. Export credentials:
+#        export TG_PUSH_BOT_TOKEN="1234567890:AABBcc..."
+#        export TG_PUSH_CHAT_ID="-1001234567890"
+#   3. Make sure the CLI you want to use is installed and authenticated:
+#        claude --version    (default)
+#        codex --version     (alternative)
+#   4. Schedule via cron (macOS example, runs at 08:00 every weekday):
+#        0 8 * * 1-5  /path/to/morning-briefing.sh >> /var/log/briefing.log 2>&1
+#   5. For launchd on macOS, wrap this in a LaunchAgent plist instead of cron.
+#
+# The briefing prompt is intentionally in Italian because the operator runs
+# this for themselves. Adjust to your own language and topics.
+
+set -euo pipefail
+
+: "${TG_PUSH_BOT_TOKEN:?TG_PUSH_BOT_TOKEN must be set (see README.md)}"
+: "${TG_PUSH_CHAT_ID:?TG_PUSH_CHAT_ID must be set (see README.md)}"
+
+# Which CLI to use for the briefing. Override with BRIEFING_CLI=codex, etc.
+BRIEFING_CLI="${BRIEFING_CLI:-claude}"
+
+# The prompt the AI will reason over. Adjust to your tools, topics, language.
+PROMPT="Briefing del giorno. Consulta:
+- Il mio calendario di oggi (Google Calendar via MCP)
+- Le mie priorità Todoist di oggi (top 3 by priority)
+- La mia email non letta importante (se hai accesso)
+- Il mio task manager personale per deadline imminenti
+
+Rispondi in italiano, massimo 6 bullet point molto concisi. Se una fonte
+non è disponibile, saltala senza lamentele. Non aggiungere saluti o
+commenti introduttivi — solo i bullet."
+
+# Generate the briefing. Capture stdout only; errors go to stderr for cron logs.
+case "${BRIEFING_CLI}" in
+  claude)
+    BRIEFING=$(claude -p "${PROMPT}" --output-format json 2>/dev/null | jq -r '.result // empty')
+    ;;
+  codex)
+    BRIEFING=$(codex exec --json "${PROMPT}" 2>/dev/null | jq -r 'select(.type=="item.completed") | .item.text // empty' | head -c 3500)
+    ;;
+  *)
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Unknown BRIEFING_CLI: ${BRIEFING_CLI}" >&2
+    exit 1
+    ;;
+esac
+
+# If the CLI produced nothing usable, don't spam an empty notification.
+if [ -z "${BRIEFING}" ] || [[ "${BRIEFING}" =~ ^[[:space:]]*$ ]]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Empty briefing — skipping push" >&2
+  exit 0
+fi
+
+# Telegram hard limit is 4096 chars per message.
+HEADER="🌅 Briefing del giorno — $(date +%A\ %d\ %B)"
+FULL_TEXT="${HEADER}
+
+${BRIEFING}"
+
+if [ "${#FULL_TEXT}" -gt 4000 ]; then
+  FULL_TEXT="${FULL_TEXT:0:4000}… [truncated]"
+fi
+
+HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+  -X POST "https://api.telegram.org/bot${TG_PUSH_BOT_TOKEN}/sendMessage" \
+  --data-urlencode "chat_id=${TG_PUSH_CHAT_ID}" \
+  --data-urlencode "text=${FULL_TEXT}")
+
+if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 300 ]; then
+  exit 0
+else
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Telegram sendMessage failed: HTTP ${HTTP_CODE}" >&2
+  exit 2
+fi

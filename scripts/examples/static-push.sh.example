@@ -1,0 +1,54 @@
+#!/bin/bash
+#
+# static-push.sh — plain static notification to Telegram via a dedicated push bot.
+#
+# Use this from CI, webhooks, monitors, or any script that just needs to send
+# a fixed message to Telegram. Zero dependencies on this bridge or on any
+# AI CLI. The only requirement is a bot token and a chat/channel ID.
+#
+# Setup:
+#   1. Create a dedicated bot via @BotFather: /newbot → save the token
+#   2. (Optional) Create a private channel, add the bot as admin, get the
+#      channel ID (negative number) via forwarding a message to @userinfobot
+#   3. Export the credentials:
+#        export TG_PUSH_BOT_TOKEN="1234567890:AABBcc..."
+#        export TG_PUSH_CHAT_ID="-1001234567890"   # or positive for direct chat
+#
+# Usage:
+#   ./static-push.sh "Build #1234 failed on main"
+#   ./static-push.sh "Deploy to prod completed successfully"
+#   ./static-push.sh "Disk usage on /var is 92% — investigate"
+#
+# Exit codes:
+#   0  — message sent successfully (curl got HTTP 2xx)
+#   1  — missing environment variable or missing argument
+#   2  — curl failed (network error, invalid token, chat not found, etc.)
+
+set -euo pipefail
+
+: "${TG_PUSH_BOT_TOKEN:?TG_PUSH_BOT_TOKEN must be set (see README.md → Proactive push)}"
+: "${TG_PUSH_CHAT_ID:?TG_PUSH_CHAT_ID must be set (see README.md → Proactive push)}"
+
+if [ $# -lt 1 ]; then
+  echo "Usage: $0 <message>" >&2
+  exit 1
+fi
+
+MESSAGE="$*"
+
+# Telegram limit is 4096 chars per message. Truncate if longer, add a notice.
+if [ "${#MESSAGE}" -gt 4000 ]; then
+  MESSAGE="${MESSAGE:0:4000}… [truncated]"
+fi
+
+HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+  -X POST "https://api.telegram.org/bot${TG_PUSH_BOT_TOKEN}/sendMessage" \
+  --data-urlencode "chat_id=${TG_PUSH_CHAT_ID}" \
+  --data-urlencode "text=${MESSAGE}")
+
+if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 300 ]; then
+  exit 0
+else
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Telegram sendMessage failed: HTTP ${HTTP_CODE}" >&2
+  exit 2
+fi

@@ -421,6 +421,11 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
 
   bot.command("cleanup", async (ctx) => {
     try {
+      if (!kilo) {
+        await replyChunks(ctx, "Kilo is not available on this machine. The /cleanup command only manages Kilo sessions.")
+        return
+      }
+
       // Defensive: ctx.match?.trim().toLowerCase() crashes if ctx.match is
       // undefined because the optional chain only short-circuits .trim(),
       // not .toLowerCase(). Use a safe default instead.

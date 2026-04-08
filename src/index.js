@@ -167,43 +167,49 @@ async function main() {
   installShutdownHandlers(() => pruneTimer)
 
   // ── Kilo server lifecycle ──
-  // If KILO_SERVE_URL is explicitly set in env, skip spawning and use that URL (legacy/external mode).
-  // Otherwise, spawn kilo serve on config.kiloServePort and wait for it to be ready.
-  const externalUrl = config.kiloServeUrlExplicit
-  let kiloBaseUrl
-  let kiloPassword
+  // Kilo is optional: if it cannot start (binary missing, config error, port conflict),
+  // the bridge boots with non-Kilo backends only and logs a warning instead of exiting.
+  // All Kilo-specific code paths in commands/handlers are gated on `kilo !== null`
+  // (or on `binding.cli === "kilo"`, which can never be true for new sessions when
+  // Kilo is not registered as a backend).
+  let kilo = null
+  let kiloBaseUrl = null // retained only for the startup log below
 
+  const externalUrl = config.kiloServeUrlExplicit
   if (externalUrl) {
     kiloBaseUrl = externalUrl
-    kiloPassword = config.kiloServerPassword
+    kilo = new KiloClient({
+      baseUrl: kiloBaseUrl,
+      username: config.kiloServerUsername,
+      password: config.kiloServerPassword,
+    })
+    registerBackend(new KiloBackend(kilo))
     log.info("bridge.startup", "kilo_external_mode", { url: kiloBaseUrl, persist: true })
   } else {
     try {
       const kiloHandle = await startKiloServer({ port: config.kiloServePort })
       kiloBaseUrl = kiloHandle.baseUrl
-      kiloPassword = ""
+      kilo = new KiloClient({
+        baseUrl: kiloBaseUrl,
+        username: config.kiloServerUsername,
+        password: "",
+      })
+      registerBackend(new KiloBackend(kilo))
       log.info("bridge.startup", "kilo_server_ready", {
         pid: kiloHandle.pid,
-        base_url: kiloHandle.baseUrl,
+        base_url: kiloBaseUrl,
         persist: true,
       })
     } catch (error) {
-      log.error("bridge.startup", "kilo_server_failed", {
+      log.warn("bridge.startup", "kilo_unavailable", {
         error: error.message,
         persist: true,
       })
-      process.exit(1)
+      // kilo remains null; Kilo backend is disabled for this session.
     }
   }
 
-  const kilo = new KiloClient({
-    baseUrl: kiloBaseUrl,
-    username: config.kiloServerUsername,
-    password: kiloPassword,
-  })
-
-  // Register CLI backends (must happen before setupCommands/setupHandlers)
-  registerBackend(new KiloBackend(kilo))
+  // Register non-Kilo backends unconditionally.
   registerBackend(new CodexBackend())
   registerBackend(new CopilotBackend())
   registerBackend(new GeminiBackend())
@@ -260,7 +266,7 @@ async function main() {
   }
 
   log.info("startup", "bridge.starting", {
-    kilo_url: kiloBaseUrl,
+    kilo_url: kiloBaseUrl ?? "disabled",
     default_directory: displayPath(config.defaultDirectory),
     default_agent: config.bridgeDefaultAgent,
     log_level: config.logLevel,

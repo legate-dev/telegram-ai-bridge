@@ -584,9 +584,40 @@ test("/cleanup preview hides confirm footer when all sessions are protected (R6)
   )
   assert.ok(
     capturedReplies[0].includes("All bridge-created sessions are protected"),
-    "user must be told there is nothing to do",
+    "preview should still list protected sessions",
   )
 })
+
+// ── /cleanup with kilo=null ────────────────────────────────────────────────
+
+test("/cleanup returns unavailable message when kilo is null (Kilo-free install)", async () => {
+  capturedReplies.length = 0
+  const nullKiloBot = makeMockBot()
+  setupCommands(nullKiloBot, null, fakeRegistry)
+  await nullKiloBot.handlers.cleanup(makeCtx(1, ""))
+  assert.equal(capturedReplies.length, 1, "should reply exactly once")
+  assert.ok(
+    capturedReplies[0].toLowerCase().includes("kilo"),
+    "reply should mention Kilo",
+  )
+  assert.ok(
+    capturedReplies[0].toLowerCase().includes("not available") || capturedReplies[0].toLowerCase().includes("unavailable"),
+    "reply should indicate Kilo is unavailable",
+  )
+})
+
+test("/cleanup confirm also returns unavailable message when kilo is null", async () => {
+  capturedReplies.length = 0
+  const nullKiloBot = makeMockBot()
+  setupCommands(nullKiloBot, null, fakeRegistry)
+  await nullKiloBot.handlers.cleanup(makeCtx(1, "confirm"))
+  assert.equal(capturedReplies.length, 1, "should reply exactly once")
+  assert.ok(
+    capturedReplies[0].toLowerCase().includes("not available") || capturedReplies[0].toLowerCase().includes("unavailable"),
+    "confirm path should also short-circuit cleanly",
+  )
+})
+
 
 test("/cleanup ignores sessions where source is NULL (external / pre-migration)", async () => {
   capturedReplies.length = 0

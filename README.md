@@ -10,7 +10,7 @@ Same sessions, same config, same MCP servers. Nothing to rebuild.
   <img src="docs/screenshots/new-session-flow.png" width="340" alt="From /start to a new session bound to a real workspace in three taps"/>
 </p>
 
-<p align="center"><sub><b>Left:</b> when the AI calls <code>mcp_question</code>, the bridge surfaces the choices as a native Telegram inline keyboard — tap to answer. <b>Right:</b> <code>/new</code> picks a CLI, binds a workspace, and you're chatting in three taps.</sub></p>
+<p align="center"><small><b>Left:</b> when the AI calls <code>mcp_question</code>, the bridge surfaces the choices as a native Telegram inline keyboard — tap to answer. <b>Right:</b> <code>/new</code> picks a CLI, binds a workspace, and you're chatting in three taps.</small></p>
 
 ## About this project
 

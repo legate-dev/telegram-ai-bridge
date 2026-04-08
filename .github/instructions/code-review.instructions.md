@@ -6,7 +6,7 @@ applyTo: "**/*"
 
 ## Review posture
 
-You are reviewing code in a Telegram bridge that wraps AI CLI backends. The codebase is small (~2k LOC) but has real users and handles subprocess spawning, SQLite state, and Telegram API interactions. Bugs here cause silent data corruption or broken sessions.
+You are reviewing code in a Telegram bridge that wraps AI CLI backends. The codebase is ~5.8k LOC source + ~10.7k LOC tests (1.8× test/source ratio), single-user self-hosted deployment, and handles subprocess spawning, SQLite state, and Telegram API interactions. Bugs here cause silent data corruption, broken sessions, or secret leakage to the operator's phone. Treat every change with the seriousness that production deployments on other people's hosts deserve.
 
 ## Priority checklist
 

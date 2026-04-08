@@ -117,10 +117,15 @@ test("spawn command shape: uses config.kiloServeShell with -lc exec wrapper", as
   await startKiloServer({ port: 4097 })
 
   assert.equal(capturedArgs[0], "/bin/testshell")
-  assert.deepEqual(capturedArgs[1], ["-lc", "exec kilo serve --host 127.0.0.1 --port 4097"])
+  assert.deepEqual(capturedArgs[1], ["-lc", "exec kilo serve --hostname 127.0.0.1 --port 4097"])
 })
 
-test("spawn command includes --host 127.0.0.1 before --port: explicit localhost bind invariant", async () => {
+test("spawn command includes --hostname 127.0.0.1 before --port: explicit localhost bind invariant", async () => {
+  // Kilo 7.1.8+ uses --hostname (not --host). An earlier version of this file
+  // passed --host, which Kilo rejected with an unknown-argument error, silently
+  // taking down the bridge on startup. This test locks the correct flag name
+  // and the 127.0.0.1 value as a regression guard against a future edit slipping
+  // the flag name back to --host or removing the explicit bind entirely.
   await stopKiloServer()
 
   const child = makeChild({ pid: 9 })
@@ -133,9 +138,15 @@ test("spawn command includes --host 127.0.0.1 before --port: explicit localhost 
 
   await startKiloServer({ port: 5000 })
 
+  // Word boundary on --hostname so that a hypothetical --host regression doesn't
+  // accidentally satisfy the assertion via substring matching.
   assert.ok(
-    /--host 127\.0\.0\.1 --port \d+/.test(capturedCmd),
-    `spawn command must include '--host 127.0.0.1 --port <n>'; got: ${capturedCmd}`,
+    /\bexec kilo serve --hostname 127\.0\.0\.1 --port \d+/.test(capturedCmd),
+    `spawn command must include 'exec kilo serve --hostname 127.0.0.1 --port <n>'; got: ${capturedCmd}`,
+  )
+  assert.ok(
+    !/--host\b(?!name)/.test(capturedCmd),
+    `spawn command must NOT use the legacy --host flag; got: ${capturedCmd}`,
   )
 })
 
@@ -268,6 +279,95 @@ test("exit event during startup: child exits before ready; rejects immediately w
 
   await assert.rejects(() => promise, (err) => {
     assert.ok(err.message.includes("exited unexpectedly"), `unexpected message: ${err.message}`)
+    return true
+  })
+})
+
+test("exit with stderr output: stderr tail is surfaced in the rejection error", async () => {
+  // Regression guard: when Kilo fails a config validation (e.g. an opencode.json
+  // with an unsupported `env` key on an MCP entry) it writes the diagnostic to
+  // stderr and then exits with code 1. The bridge must include that stderr tail
+  // in the rejection error so users see the actual cause ("Invalid input
+  // mcp.memory") in the startup log instead of a generic "exited unexpectedly"
+  // that forces them to reproduce the failure manually with LOG_LEVEL=debug.
+  await stopKiloServer()
+
+  let capturedChild
+  spawnImpl = mock.fn(() => {
+    capturedChild = makeChild({ pid: 89 })
+    return capturedChild
+  })
+  fetchImpl = mock.fn(async () => { throw new Error("ECONNREFUSED") })
+
+  const promise = startKiloServer({ port: 4097 })
+
+  // Simulate Kilo emitting a config validation error on stderr, then exiting.
+  capturedChild.stderr.emit(
+    "data",
+    Buffer.from("Error: Configuration is invalid at /Users/test/.config/kilo/opencode.json\n↳ Invalid input mcp.memory\n"),
+  )
+  capturedChild.emit("exit", 1, null)
+
+  await assert.rejects(() => promise, (err) => {
+    assert.ok(err.message.includes("exited unexpectedly"), `missing exit info: ${err.message}`)
+    assert.ok(err.message.includes("Invalid input mcp.memory"), `missing stderr tail: ${err.message}`)
+    assert.ok(err.message.includes("Configuration is invalid"), `missing stderr context: ${err.message}`)
+    return true
+  })
+})
+
+test("exit with stderr tail bounded to STDERR_TAIL_LIMIT lines: very long stderr is truncated", async () => {
+  // Defense against runaway error messages: if Kilo spews a 10k-line stack trace
+  // before exiting, we want to cap the tail included in the rejection error so
+  // the bridge log stays readable. The limit is 20 lines (see STDERR_TAIL_LIMIT
+  // in src/kilo-server.js). This test asserts the tail-truncation behavior.
+  await stopKiloServer()
+
+  let capturedChild
+  spawnImpl = mock.fn(() => {
+    capturedChild = makeChild({ pid: 90 })
+    return capturedChild
+  })
+  fetchImpl = mock.fn(async () => { throw new Error("ECONNREFUSED") })
+
+  const promise = startKiloServer({ port: 4097 })
+
+  // Emit 50 lines of stderr. The first 30 should be truncated off the tail,
+  // only the last 20 should survive into the error message.
+  for (let i = 0; i < 50; i++) {
+    capturedChild.stderr.emit("data", Buffer.from(`stderr line ${i}\n`))
+  }
+  capturedChild.emit("exit", 1, null)
+
+  await assert.rejects(() => promise, (err) => {
+    // Lines 0-29 must be gone from the tail.
+    assert.ok(!err.message.includes("stderr line 0\n"), `unexpected early line in tail: ${err.message}`)
+    assert.ok(!err.message.includes("stderr line 29\n"), `unexpected early line in tail: ${err.message}`)
+    // Lines 30-49 must be present (the last 20 lines of the 50-line stream).
+    assert.ok(err.message.includes("stderr line 30"), `expected last 20 lines in tail, missing 'stderr line 30': ${err.message}`)
+    assert.ok(err.message.includes("stderr line 49"), `expected last 20 lines in tail, missing 'stderr line 49': ${err.message}`)
+    return true
+  })
+})
+
+test("exit with no stderr output: rejection error is unchanged from legacy format", async () => {
+  // Guard against accidentally introducing a trailing ": " or extra whitespace
+  // when stderr is empty. The error message should be byte-identical to the
+  // pre-change format when no stderr data was ever emitted.
+  await stopKiloServer()
+
+  let capturedChild
+  spawnImpl = mock.fn(() => {
+    capturedChild = makeChild({ pid: 91 })
+    return capturedChild
+  })
+  fetchImpl = mock.fn(async () => { throw new Error("ECONNREFUSED") })
+
+  const promise = startKiloServer({ port: 4097 })
+  capturedChild.emit("exit", 2, null)  // no stderr data beforehand
+
+  await assert.rejects(() => promise, (err) => {
+    assert.equal(err.message, "kilo serve exited unexpectedly (code=2, signal=null)")
     return true
   })
 })

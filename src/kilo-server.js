@@ -36,19 +36,39 @@ let kiloChild = null
 export async function startKiloServer({ port }) {
   // Explicit localhost bind. The bridge forces KILO_SERVER_PASSWORD="" (see buildEnv above),
   // so exposing the HTTP API beyond 127.0.0.1 would grant unauthenticated arbitrary code
-  // execution to anyone on the LAN. Do not remove --host 127.0.0.1 without also adding auth.
-  const child = spawn(config.kiloServeShell, ["-lc", `exec kilo serve --host 127.0.0.1 --port ${port}`], {
+  // execution to anyone on the LAN (Kilo's tool-call API can execute arbitrary shell
+  // commands). Kilo 7.1.8+ defaults --hostname to "127.0.0.1", but we pass it explicitly
+  // as defense-in-depth against: (a) an opencode.json config overriding the default,
+  // (b) an --mdns flag being introduced elsewhere in the spawn chain (it flips the
+  // default to 0.0.0.0), (c) a future Kilo version changing the default. Do not remove
+  // --hostname 127.0.0.1 without also adding auth. The flag name is `--hostname`, not
+  // `--host` — older drafts of this code used `--host` which Kilo rejects with an
+  // unknown-argument error, silently taking down the bridge on startup.
+  const child = spawn(config.kiloServeShell, ["-lc", `exec kilo serve --hostname 127.0.0.1 --port ${port}`], {
     env: buildEnv(),
     stdio: ["ignore", "pipe", "pipe"],
     detached: false,
   })
+
+  // Collect stderr into a tail buffer so that if Kilo exits before becoming ready,
+  // the actual diagnostic (config validation failure, missing binary, port conflict,
+  // etc.) is surfaced in the startup error instead of a generic "exited unexpectedly"
+  // message. Without this, users need LOG_LEVEL=debug to even see the stderr, and
+  // end up having to reproduce the failure manually in a terminal.
+  const stderrTail = []
+  const STDERR_TAIL_LIMIT = 20
 
   // Forward kilo output to the bridge logger so structured logs stay clean.
   child.stdout.on("data", (data) => {
     log.debug("kilo-server", "stdout", { line: data.toString().trimEnd() })
   })
   child.stderr.on("data", (data) => {
-    log.debug("kilo-server", "stderr", { line: data.toString().trimEnd() })
+    const line = data.toString().trimEnd()
+    if (line) {
+      stderrTail.push(line)
+      if (stderrTail.length > STDERR_TAIL_LIMIT) stderrTail.shift()
+    }
+    log.debug("kilo-server", "stderr", { line })
   })
 
   kiloChild = child
@@ -67,7 +87,12 @@ export async function startKiloServer({ port }) {
     const onEarlyExit = (code, signal) => {
       cancelled = true
       kiloChild = null
-      reject(new Error(`kilo serve exited unexpectedly (code=${code}, signal=${signal})`))
+      // Include the last stderr lines so config validation errors (like
+      // "Invalid input mcp.memory" from an opencode.json with unsupported keys)
+      // are immediately visible without requiring LOG_LEVEL=debug.
+      const tail = stderrTail.join("\n").trim()
+      const detail = tail ? `: ${tail}` : ""
+      reject(new Error(`kilo serve exited unexpectedly (code=${code}, signal=${signal})${detail}`))
     }
 
     child.once("error", onError)

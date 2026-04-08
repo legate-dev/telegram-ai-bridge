@@ -55,20 +55,38 @@ export async function startKiloServer({ port }) {
   // etc.) is surfaced in the startup error instead of a generic "exited unexpectedly"
   // message. Without this, users need LOG_LEVEL=debug to even see the stderr, and
   // end up having to reproduce the failure manually in a terminal.
+  //
+  // IMPORTANT: Node ChildProcess stderr "data" events deliver arbitrary byte chunks,
+  // NOT individual lines. A single chunk can contain multiple newline-separated lines
+  // (e.g. when Kilo flushes a stack trace atomically) OR a partial line that is
+  // completed by the next chunk. We therefore split each chunk on "\n" and maintain
+  // a `stderrRemainder` string for the trailing partial line that must be carried
+  // across chunks. The STDERR_TAIL_LIMIT cap is applied to the RESULTING LINES, not
+  // to the raw chunks — otherwise a single large chunk could bypass the cap
+  // entirely and paste a 10k-line stack trace into the startup error.
   const stderrTail = []
   const STDERR_TAIL_LIMIT = 20
+  let stderrRemainder = ""
 
   // Forward kilo output to the bridge logger so structured logs stay clean.
   child.stdout.on("data", (data) => {
     log.debug("kilo-server", "stdout", { line: data.toString().trimEnd() })
   })
   child.stderr.on("data", (data) => {
-    const line = data.toString().trimEnd()
-    if (line) {
-      stderrTail.push(line)
-      if (stderrTail.length > STDERR_TAIL_LIMIT) stderrTail.shift()
+    // Prepend any partial line carried over from the previous chunk, then split
+    // into complete lines. The last element of the split is either an empty
+    // string (if the chunk ended exactly on a newline) or the new partial line
+    // that continues into the next chunk — keep it as the new remainder.
+    const combined = stderrRemainder + data.toString()
+    const parts = combined.split("\n")
+    stderrRemainder = parts.pop() ?? ""
+    for (const line of parts) {
+      if (line) {
+        stderrTail.push(line)
+        if (stderrTail.length > STDERR_TAIL_LIMIT) stderrTail.shift()
+      }
+      log.debug("kilo-server", "stderr", { line })
     }
-    log.debug("kilo-server", "stderr", { line })
   })
 
   kiloChild = child
@@ -87,6 +105,15 @@ export async function startKiloServer({ port }) {
     const onEarlyExit = (code, signal) => {
       cancelled = true
       kiloChild = null
+      // If Kilo exited in the middle of writing a line (no trailing newline),
+      // the last piece of output is sitting in stderrRemainder — flush it into
+      // the tail so it shows up in the error. Apply the same cap as normal
+      // line handling so a partial line can still trigger a shift.
+      if (stderrRemainder) {
+        stderrTail.push(stderrRemainder)
+        if (stderrTail.length > STDERR_TAIL_LIMIT) stderrTail.shift()
+        stderrRemainder = ""
+      }
       // Include the last stderr lines so config validation errors (like
       // "Invalid input mcp.memory" from an opencode.json with unsupported keys)
       // are immediately visible without requiring LOG_LEVEL=debug.

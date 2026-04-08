@@ -350,6 +350,83 @@ test("exit with stderr tail bounded to STDERR_TAIL_LIMIT lines: very long stderr
   })
 })
 
+test("exit with multi-line single chunk: STDERR_TAIL_LIMIT applies to lines, not chunks", async () => {
+  // Regression guard for a subtle line/chunk confusion: Node ChildProcess stderr
+  // 'data' events deliver arbitrary byte chunks, NOT individual lines. A single
+  // chunk can contain 50 newline-separated lines when Kilo flushes a stack trace
+  // atomically. Before the line-splitting fix, the tail buffer pushed one entry
+  // per chunk, so a large multi-line chunk would bypass the 20-line cap and
+  // paste the entire thing into the startup error message. This test emits 50
+  // lines in a SINGLE chunk and asserts that only the last 20 survive into the
+  // error — catching the chunks-not-lines bug empirically.
+  await stopKiloServer()
+
+  let capturedChild
+  spawnImpl = mock.fn(() => {
+    capturedChild = makeChild({ pid: 92 })
+    return capturedChild
+  })
+  fetchImpl = mock.fn(async () => { throw new Error("ECONNREFUSED") })
+
+  const promise = startKiloServer({ port: 4097 })
+
+  // 50 lines in ONE chunk (not 50 chunks of 1 line each — that's the other test).
+  const bigChunk = Array.from({ length: 50 }, (_, i) => `bulk line ${i}`).join("\n") + "\n"
+  capturedChild.stderr.emit("data", Buffer.from(bigChunk))
+  capturedChild.emit("exit", 1, null)
+
+  await assert.rejects(() => promise, (err) => {
+    // Lines 0-29 must be gone (the first 30 of 50, trimmed to keep last 20).
+    assert.ok(!err.message.includes("bulk line 0\n"), `unexpected early line 0: ${err.message}`)
+    assert.ok(!err.message.includes("bulk line 29\n"), `unexpected early line 29: ${err.message}`)
+    // Lines 30-49 must be present (the last 20 of the 50-line bulk chunk).
+    assert.ok(err.message.includes("bulk line 30"), `missing 'bulk line 30' in tail: ${err.message}`)
+    assert.ok(err.message.includes("bulk line 49"), `missing 'bulk line 49' in tail: ${err.message}`)
+    return true
+  })
+})
+
+test("exit with partial-line chunks: remainder is reassembled across chunks and flushed on exit", async () => {
+  // Second half of the chunks-vs-lines story: a stderr chunk can end mid-line
+  // (no trailing newline). The next chunk continues the same line. The tail
+  // buffer must track a `stderrRemainder` string across chunks so the line is
+  // reassembled correctly, and when the process exits with a non-empty
+  // remainder (i.e. Kilo died mid-write), that partial line must be flushed
+  // into the tail instead of silently lost. Otherwise the most recent stderr
+  // output — often the most diagnostic — would disappear exactly when we need
+  // it most.
+  await stopKiloServer()
+
+  let capturedChild
+  spawnImpl = mock.fn(() => {
+    capturedChild = makeChild({ pid: 93 })
+    return capturedChild
+  })
+  fetchImpl = mock.fn(async () => { throw new Error("ECONNREFUSED") })
+
+  const promise = startKiloServer({ port: 4097 })
+
+  // Case 1: a complete line split across three chunks (remainder carried twice).
+  capturedChild.stderr.emit("data", Buffer.from("first "))
+  capturedChild.stderr.emit("data", Buffer.from("complete "))
+  capturedChild.stderr.emit("data", Buffer.from("line\nsecond "))
+  // Case 2: an incomplete trailing line with no final newline, then exit.
+  capturedChild.stderr.emit("data", Buffer.from("incomplete"))
+  capturedChild.emit("exit", 1, null)
+
+  await assert.rejects(() => promise, (err) => {
+    assert.ok(
+      err.message.includes("first complete line"),
+      `reassembled line missing from tail: ${err.message}`,
+    )
+    assert.ok(
+      err.message.includes("second incomplete"),
+      `flushed remainder missing from tail: ${err.message}`,
+    )
+    return true
+  })
+})
+
 test("exit with no stderr output: rejection error is unchanged from legacy format", async () => {
   // Guard against accidentally introducing a trailing ": " or extra whitespace
   // when stderr is empty. The error message should be byte-identical to the

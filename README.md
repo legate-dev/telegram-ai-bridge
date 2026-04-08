@@ -4,6 +4,14 @@ Run your local AI coding CLI from Telegram on your phone. The bridge forwards me
 
 Same sessions, same config, same MCP servers. Nothing to rebuild.
 
+<p align="center">
+  <img src="docs/screenshots/hero-inline-keyboard.png" width="340" alt="AI asks a question — you tap an answer. mcp_question rendered as a native Telegram inline keyboard"/>
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/new-session-flow.png" width="340" alt="From /start to a new session bound to a real workspace in three taps"/>
+</p>
+
+<p align="center"><small><b>Left:</b> when the AI calls <code>mcp_question</code>, the bridge surfaces the choices as a native Telegram inline keyboard — tap to answer. <b>Right:</b> <code>/new</code> picks a CLI, binds a workspace, and you're chatting in three taps.</small></p>
+
 ## About this project
 
 I built this for myself. I wanted to keep working with my AI coding CLIs from my phone without giving up the local-first, provider-agnostic setup I trust. It's been my daily driver for months and it does what I need it to do. I'm publishing it in case it's useful to someone else.

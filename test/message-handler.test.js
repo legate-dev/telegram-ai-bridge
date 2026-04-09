@@ -101,6 +101,16 @@ await mock.module("../src/commands.js", {
   },
 })
 
+const mockLastTurn = {
+  result: null,
+}
+
+await mock.module("../src/last-turn.js", {
+  namedExports: {
+    readLastTurn: async () => mockLastTurn.result,
+  },
+})
+
 await mock.module("../src/log.js", {
   namedExports: {
     log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
@@ -166,6 +176,7 @@ function resetMocks() {
   mockPathParser.result = null
   mockPathValidator.result = { ok: true }
   mockSupportedClis.result = ["claude", "kilo"]
+  mockLastTurn.result = null
 }
 
 // ── Tests: text message routing ───────────────────────────────────────────────
@@ -670,6 +681,41 @@ test("callback bind: rejects sessions with sentinel '.' workspace", async () => 
     ctx.callbackAnswers.some((a) => a?.show_alert === true),
     "expected a show_alert for '.' workspace",
   )
+})
+
+test("callback bind: sends last-turn follow-up reply when readLastTurn returns text", async () => {
+  resetMocks()
+  mockLastTurn.result = "Here is the last thing I said."
+  mockDb.sessions["claude:sess-with-history"] = {
+    cli: "claude",
+    session_id: "sess-with-history",
+    workspace: "/tmp/project",
+    resume_cmd: null,
+  }
+  const ctx = createCallbackCtx({ chatId: 1020, data: "bind:claude:sess-with-history" })
+  await callbackHandler(ctx)
+
+  assert.equal(mockDb.setChatBindingCalls.length, 1, "session must be bound")
+  assert.ok(
+    ctx.replies.some((r) => r.text.includes("Last message") && r.text.includes("Here is the last thing I said.")),
+    "expected a follow-up reply containing the last assistant message",
+  )
+})
+
+test("callback bind: no extra reply when readLastTurn returns null", async () => {
+  resetMocks()
+  mockLastTurn.result = null
+  mockDb.sessions["claude:sess-no-history"] = {
+    cli: "claude",
+    session_id: "sess-no-history",
+    workspace: "/tmp/project",
+    resume_cmd: null,
+  }
+  const ctx = createCallbackCtx({ chatId: 1021, data: "bind:claude:sess-no-history" })
+  await callbackHandler(ctx)
+
+  assert.equal(mockDb.setChatBindingCalls.length, 1, "session must be bound")
+  assert.equal(ctx.replies.length, 0, "no follow-up reply when readLastTurn returns null")
 })
 
 test("callback newcli:cli:hash dispatches to createNewSession", async () => {

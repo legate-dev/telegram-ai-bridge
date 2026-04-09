@@ -623,7 +623,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
     try {
       const lastText = await readLastTurn(row.cli, row.session_id, row.workspace, { kiloClient: kilo })
       if (lastText) {
-        await ctx.reply(`↩️ Last message:\n\n${lastText}`)
+        await replyChunks(ctx, `↩️ Last message:\n\n${lastText}`)
       }
     } catch {
       // Never let a last-turn read failure block the bind response

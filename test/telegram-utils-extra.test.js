@@ -55,22 +55,36 @@ test("authorizedUserId returns the configured user ID as a string", () => {
 
 // ── displayPath ──
 
-test("displayPath returns '.' for null input", () => {
-  assert.equal(displayPath(null), ".")
+test("displayPath returns '~' for null input", () => {
+  assert.equal(displayPath(null), "~")
 })
 
-test("displayPath returns '.' for an empty string", () => {
-  assert.equal(displayPath(""), ".")
+test("displayPath returns '~' for an empty string", () => {
+  assert.equal(displayPath(""), "~")
 })
 
-test("displayPath returns '.' for the current working directory", () => {
-  assert.equal(displayPath(process.cwd()), ".")
+test("displayPath returns tilde-prefixed path for cwd when under home", () => {
+  const cwd = process.cwd()
+  const home = os.homedir()
+  const result = displayPath(cwd)
+  if (cwd === home) {
+    assert.equal(result, "~")
+  } else if (cwd.startsWith(`${home}${path.sep}`)) {
+    assert.equal(result, `~/${path.relative(home, cwd)}`)
+  } else {
+    assert.equal(result, cwd)
+  }
 })
 
-test("displayPath returns a relative path for a subdirectory of cwd", () => {
+test("displayPath returns tilde-prefixed path for a subdirectory of cwd", () => {
   const sub = path.join(process.cwd(), "src", "utils")
+  const home = os.homedir()
   const result = displayPath(sub)
-  assert.equal(result, path.join("src", "utils"))
+  if (sub.startsWith(`${home}${path.sep}`)) {
+    assert.equal(result, `~/${path.relative(home, sub)}`)
+  } else {
+    assert.equal(result, sub)
+  }
 })
 
 test("displayPath returns '~' for the user home directory", () => {

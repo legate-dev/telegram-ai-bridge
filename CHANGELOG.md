@@ -13,6 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-04-09
+
+### Fixed
+
+- **Kilo is now optional at startup** (#10). The bridge previously called
+  `process.exit(1)` if `kilo serve` failed to start, making Kilo an
+  undocumented hard requirement even for Codex-only or Claude-only installs.
+  The bridge now logs a warning and boots with whichever backends are
+  available. `/cleanup` returns a clear message instead of crashing when
+  Kilo is absent.
+- **`/status` and workspace listings no longer show `Directory: .`** (#11).
+  When the bridge runs from its own directory (the default when
+  `BRIDGE_DEFAULT_DIRECTORY` is not set), `displayPath` now returns the
+  full `~/…` path instead of a cwd-relative `.`.
+
+### Documentation
+
+- Added a **one token, one machine** warning to the README security section
+  (#12). Running two bridge instances with the same bot token causes Telegram
+  to split messages between them unpredictably; create a separate bot via
+  BotFather for each host.
+
+### Internal
+
+- Split `src/backends.js` (820 LOC) into `src/backends/*.js` — one file per
+  backend plus shared utilities and a registry (#14). No behaviour change;
+  `src/backends.js` is kept as a barrel re-export so all existing import
+  paths continue to work.
+
 ## [0.3.1] - 2026-04-08
 
 **Initial public release.**

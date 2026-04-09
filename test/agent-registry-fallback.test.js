@@ -70,6 +70,7 @@ await mock.module("../src/telegram-utils.js", {
     compactPath: (p) => p ?? ".",
     registerPath: () => "fakehash",
     resolvePath: () => null,
+    resolveSessionLabel: (binding) => binding?.session_id?.slice(0, 12) ?? "unknown",
   },
 })
 

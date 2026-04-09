@@ -18,6 +18,7 @@ await mock.module("../src/db.js", {
   namedExports: {
     getChatBinding: () => null,
     recentSessions: () => [],
+    getCliSessionById: () => null,
   },
 })
 

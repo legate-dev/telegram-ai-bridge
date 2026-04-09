@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { config } from "./config.js"
-import { getChatBinding, recentSessions } from "./db.js"
+import { getChatBinding, getCliSessionById, recentSessions } from "./db.js"
 import { chunkText, formatForTelegram, formatSessionStatus } from "./format.js"
 import { log, redactString } from "./log.js"
 
@@ -266,6 +266,17 @@ export function compactPath(input) {
     return `${name} (~/${segments.slice(0, -1).join("/")})`
   }
   return name
+}
+
+/**
+ * Resolves a human-readable label for a bound session.
+ * Preference order: display_name → title → truncated session_id.
+ * Used consistently across /start, /status, /abort, /detach, and bind callbacks.
+ */
+export function resolveSessionLabel(binding) {
+  if (!binding?.session_id) return "unknown"
+  const session = getCliSessionById(binding.cli, binding.session_id)
+  return session?.display_name || session?.title || binding.session_id.slice(0, 12)
 }
 
 export function formatSessionLine(session) {

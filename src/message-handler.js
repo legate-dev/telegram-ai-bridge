@@ -607,7 +607,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
     await ctx.editMessageText(
       [
         `Bound to [${row.cli}] session.`,
-        `Session: ${row.session_id.slice(0, 20)}`,
+        `Session: ${row.display_name || row.title || row.session_id.slice(0, 20)}`,
         `Workspace: ${displayPath(row.workspace)}`,
         `Agent: ${agent}`,
         "",

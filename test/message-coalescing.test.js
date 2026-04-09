@@ -82,6 +82,7 @@ await mock.module("../src/telegram-utils.js", {
     resolvePath: () => null,
     parseUserPath: (raw) => ({ ok: true, path: raw }),
     validateWorkspaceDirectory: () => ({ ok: true }),
+    resolveSessionLabel: (binding) => binding?.session_id?.slice(0, 12) ?? "unknown",
   },
 })
 

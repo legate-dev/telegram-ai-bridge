@@ -16,6 +16,7 @@ import {
   resolvePath,
   parseUserPath,
   validateWorkspaceDirectory,
+  resolveSessionLabel,
 } from "./telegram-utils.js"
 
 const inFlightChats = new Set()
@@ -607,7 +608,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
     await ctx.editMessageText(
       [
         `Bound to [${row.cli}] session.`,
-        `Session: ${row.display_name || row.title || row.session_id.slice(0, 20)}`,
+        `Session: ${resolveSessionLabel(row)}`,
         `Workspace: ${displayPath(row.workspace)}`,
         `Agent: ${agent}`,
         "",

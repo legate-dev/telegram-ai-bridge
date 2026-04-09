@@ -256,10 +256,10 @@ focused reviewers) for catching the bug classes that would otherwise have
 shipped silently. Special mention to the integration-assumption bug class:
 the most common escape mechanism, now tracked explicitly in every Step Gate.
 
-Thanks also to the beta testers who ran the bridge live on their own
-machines and reported real-world bugs. The custom path UX hardening and
-the Telegram fragment coalescing both came directly from their reports —
-exactly the feedback loop that makes an open source project actually useful.
+Thanks to [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans) and
+[@Matita_Pereira](https://github.com/Matita_Pereira) for running the bridge live on their
+own machines and filing the first real-world bug reports — exactly the feedback loop
+that makes an open source project actually useful.
 
 [Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.1...HEAD
 [0.3.1]: https://github.com/legate-dev/telegram-ai-bridge/releases/tag/v0.3.1

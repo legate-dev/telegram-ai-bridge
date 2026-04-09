@@ -156,7 +156,10 @@ async function _readGeminiLastTurn(sessionId) {
 
   try {
     const parsed = JSON.parse(raw)
-    return parsed.response || parsed.content || parsed.text || null
+    const text = parsed.response || parsed.content || parsed.text
+    if (typeof text !== "string") return null
+    const trimmed = text.trim()
+    return trimmed || null
   } catch {
     return null
   }

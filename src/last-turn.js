@@ -134,17 +134,20 @@ async function _readCodexLastTurn(sessionId) {
           // regardless of line order — session_meta may appear after response_item lines.
           let fileSessionId = null
           let lastAssistantText = null
+          let lastAssistantFallbackText = null
           for (const line of lines) {
             try {
               const entry = JSON.parse(line)
               if (entry.type === "session_meta" && entry.payload?.id) {
                 fileSessionId = entry.payload.id
               }
-              if (entry.type === "response_item" && entry.payload?.role === "assistant") {
-                const text = entry.payload.content ?? entry.payload.text ?? entry.payload.output ?? null
-                if (text && String(text).trim()) {
-                  lastAssistantText = String(text).trim()
-                }
+              if (entry.type === "response_item") {
+                const text = _extractCodexAssistantText(entry.payload)
+                if (text) lastAssistantText = text
+              }
+              if (entry.type === "event_msg" && entry.payload?.type === "agent_message") {
+                const text = typeof entry.payload.message === "string" ? entry.payload.message.trim() : ""
+                if (text) lastAssistantFallbackText = text
               }
             } catch {
               // skip malformed lines
@@ -152,13 +155,33 @@ async function _readCodexLastTurn(sessionId) {
           }
 
           if (fileSessionId !== sessionId) continue
-          return lastAssistantText
+          return lastAssistantText || lastAssistantFallbackText
         }
       }
     }
   }
 
   return null
+}
+
+function _extractCodexAssistantText(payload) {
+  if (payload?.role !== "assistant") return null
+
+  if (typeof payload.content === "string" && payload.content.trim()) {
+    return payload.content.trim()
+  }
+
+  if (Array.isArray(payload.content)) {
+    const text = payload.content
+      .filter((part) => typeof part?.text === "string" && (part.type === "output_text" || part.type === "text"))
+      .map((part) => part.text.trim())
+      .filter(Boolean)
+      .join("\n\n")
+    if (text) return text
+  }
+
+  const fallback = payload.text ?? payload.output ?? null
+  return typeof fallback === "string" && fallback.trim() ? fallback.trim() : null
 }
 
 // ── Copilot ──

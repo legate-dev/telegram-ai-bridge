@@ -39,7 +39,7 @@ sendMessage({ sessionId, directory, text, agent, model })
 | `/agent` | `<name>` | Sets preferred Kilo agent for this chat |
 | `/models` | none | Lists available models for current CLI (Claude/Codex inline keyboard; redirects for Kilo; unsupported for others) |
 | `/model` | `<name>` | Sets model for current session (Claude/Codex only) |
-| `/status` | none | Shows current binding and Kilo title when available |
+| `/status` | none | Shows current binding; session label resolves as `display_name → title → truncated session_id` (works for all CLIs) |
 | `/abort` | none | Aborts the current bound session if backend supports it |
 | `/cleanup` | none or `confirm` | Previews bridge-created Kilo sessions to delete; only `confirm` performs deletion. Bridge ownership is determined by the deterministic `source='bridge'` flag set at session creation, NOT by title pattern. Sessions with more user turns than `KILO_CLEANUP_MAX_ROUNDS` are protected. The handler triggers a fresh `scanAll()` so preview and confirm always see the same state. |
 | `/detach` | none | Removes the current chat binding |

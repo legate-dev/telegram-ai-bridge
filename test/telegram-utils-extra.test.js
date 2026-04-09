@@ -421,10 +421,8 @@ test("formatSessionLine uses the first 12 chars of session_id when title is abse
 
 // ── resolveSessionLabel ──
 
-test("resolveSessionLabel returns display_name when present in DB", () => {
+test("resolveSessionLabel returns display_name from DB when present", () => {
   mockDb.sessionsById["codex:sess-abc-123"] = {
-    cli: "codex",
-    session_id: "sess-abc-123",
     display_name: "My Codex Project",
     title: "other title",
   }
@@ -438,8 +436,6 @@ test("resolveSessionLabel returns display_name when present in DB", () => {
 
 test("resolveSessionLabel falls back to title when display_name is absent", () => {
   mockDb.sessionsById["codex:sess-abc-456"] = {
-    cli: "codex",
-    session_id: "sess-abc-456",
     display_name: null,
     title: "My Readable Title",
   }
@@ -452,9 +448,7 @@ test("resolveSessionLabel falls back to title when display_name is absent", () =
 })
 
 test("resolveSessionLabel falls back to truncated session_id when neither display_name nor title is present", () => {
-  mockDb.sessionsById["codex:sess-abc-789"] = {
-    cli: "codex",
-    session_id: "sess-abc-789-xxxlong",
+  mockDb.sessionsById["codex:sess-abc-789-xxxlong"] = {
     display_name: null,
     title: null,
   }
@@ -462,7 +456,7 @@ test("resolveSessionLabel falls back to truncated session_id when neither displa
     const result = resolveSessionLabel({ cli: "codex", session_id: "sess-abc-789-xxxlong" })
     assert.equal(result, "sess-abc-789")
   } finally {
-    delete mockDb.sessionsById["codex:sess-abc-789"]
+    delete mockDb.sessionsById["codex:sess-abc-789-xxxlong"]
   }
 })
 
@@ -478,4 +472,50 @@ test("resolveSessionLabel returns 'unknown' when binding is null", () => {
 
 test("resolveSessionLabel returns 'unknown' when binding has no session_id", () => {
   assert.equal(resolveSessionLabel({ cli: "codex" }), "unknown")
+})
+
+test("resolveSessionLabel short-circuits using binding.display_name without a DB lookup", () => {
+  // The binding already carries display_name — no DB entry is needed
+  const result = resolveSessionLabel({
+    cli: "codex",
+    session_id: "sess-shortcircuit",
+    display_name: "Inline Name",
+    title: null,
+  })
+  assert.equal(result, "Inline Name")
+})
+
+test("resolveSessionLabel short-circuits using binding.title when display_name is absent", () => {
+  const result = resolveSessionLabel({
+    cli: "codex",
+    session_id: "sess-sc-title",
+    display_name: null,
+    title: "Inline Title",
+  })
+  assert.equal(result, "Inline Title")
+})
+
+test("resolveSessionLabel normalizes newlines and tabs to spaces", () => {
+  mockDb.sessionsById["codex:sess-ctrl"] = {
+    display_name: "line1\nline2\ttab",
+    title: null,
+  }
+  try {
+    const result = resolveSessionLabel({ cli: "codex", session_id: "sess-ctrl" })
+    assert.ok(!result.includes("\n"), "newline should be removed")
+    assert.ok(!result.includes("\t"), "tab should be removed")
+  } finally {
+    delete mockDb.sessionsById["codex:sess-ctrl"]
+  }
+})
+
+test("resolveSessionLabel caps label at 50 characters", () => {
+  const longName = "a".repeat(80)
+  mockDb.sessionsById["codex:sess-long"] = { display_name: longName, title: null }
+  try {
+    const result = resolveSessionLabel({ cli: "codex", session_id: "sess-long" })
+    assert.ok(result.length <= 50, `label length should be ≤50, got ${result.length}`)
+  } finally {
+    delete mockDb.sessionsById["codex:sess-long"]
+  }
 })

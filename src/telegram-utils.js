@@ -271,12 +271,17 @@ export function compactPath(input) {
 /**
  * Resolves a human-readable label for a bound session.
  * Preference order: display_name → title → truncated session_id.
+ * The resolved label is redacted (strips secrets) and capped at 50 chars.
  * Used consistently across /start, /status, /abort, /detach, and bind callbacks.
  */
 export function resolveSessionLabel(binding) {
   if (!binding?.session_id) return "unknown"
-  const session = getCliSessionById(binding.cli, binding.session_id)
-  return session?.display_name || session?.title || binding.session_id.slice(0, 12)
+  // Short-circuit: if the binding/row already carries the name fields (e.g. a
+  // full cli_sessions row from the bind callback), skip the extra DB lookup.
+  const raw = binding.display_name || binding.title
+    || (() => { const s = getCliSessionById(binding.cli, binding.session_id); return s?.display_name || s?.title })()
+    || binding.session_id.slice(0, 12)
+  return redactString(raw.replace(/[\r\n\t]+/g, " ")).slice(0, 50)
 }
 
 export function formatSessionLine(session) {

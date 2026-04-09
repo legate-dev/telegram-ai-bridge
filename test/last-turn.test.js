@@ -284,6 +284,19 @@ test("codex: returns null when assistant payload has no text field", async () =>
   assert.equal(result, null)
 })
 
+test("codex: returns assistant text when session_meta appears after response_item lines", async () => {
+  const file = codexFile("2024/03/19", "sess-codex-g.jsonl")
+  // session_meta is appended after the conversation events
+  writeFixture(file, [
+    JSON.stringify({ type: "response_item", payload: { role: "user", content: "Hello" } }),
+    JSON.stringify({ type: "response_item", payload: { role: "assistant", content: "Late meta reply" } }),
+    JSON.stringify({ type: "session_meta", payload: { id: "codex-sess-g", cwd: "/project" } }),
+  ].join("\n"))
+
+  const result = await readLastTurn("codex", "codex-sess-g", "/any/workspace")
+  assert.equal(result, "Late meta reply")
+})
+
 // ── Unsupported CLIs ──
 
 test("returns null for unsupported CLI without throwing", async () => {

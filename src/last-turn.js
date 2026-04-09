@@ -123,16 +123,17 @@ async function _readCodexLastTurn(sessionId) {
 
           const lines = raw.trim().split("\n").filter(Boolean)
 
-          // Single pass: check for session match and collect assistant events
-          let foundSession = false
+          // Single pass: collect the file's session ID and all assistant events
+          // regardless of line order — session_meta may appear after response_item lines.
+          let fileSessionId = null
           let lastAssistantText = null
           for (const line of lines) {
             try {
               const entry = JSON.parse(line)
-              if (entry.type === "session_meta" && entry.payload?.id === sessionId) {
-                foundSession = true
+              if (entry.type === "session_meta" && entry.payload?.id) {
+                fileSessionId = entry.payload.id
               }
-              if (foundSession && entry.type === "response_item" && entry.payload?.role === "assistant") {
+              if (entry.type === "response_item" && entry.payload?.role === "assistant") {
                 const text = entry.payload.content ?? entry.payload.text ?? entry.payload.output ?? null
                 if (text && String(text).trim()) {
                   lastAssistantText = String(text).trim()
@@ -143,7 +144,7 @@ async function _readCodexLastTurn(sessionId) {
             }
           }
 
-          if (!foundSession) continue
+          if (fileSessionId !== sessionId) continue
           return lastAssistantText
         }
       }

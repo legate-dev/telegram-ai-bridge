@@ -242,6 +242,26 @@ test("codex: returns last assistant message text (payload.output fallback)", asy
   assert.equal(result, "Output field reply")
 })
 
+test("codex: returns last assistant message text from message content blocks", async () => {
+  const file = codexFile("2024/03/15", "sess-codex-c2.jsonl")
+  writeFixture(file, codexLines("codex-sess-c2", [
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [
+          { type: "output_text", text: "Block reply line 1" },
+          { type: "output_text", text: "Block reply line 2" },
+        ],
+      },
+    },
+  ]))
+
+  const result = await readLastTurn("codex", "codex-sess-c2", "/any/workspace")
+  assert.equal(result, "Block reply line 1\n\nBlock reply line 2")
+})
+
 test("codex: returns null when no assistant messages in session", async () => {
   const file = codexFile("2024/03/16", "sess-codex-d.jsonl")
   writeFixture(file, codexLines("codex-sess-d", [
@@ -302,6 +322,17 @@ test("codex: returns assistant text when session_meta appears after response_ite
 
   const result = await readLastTurn("codex", "codex-sess-g", "/any/workspace")
   assert.equal(result, "Late meta reply")
+})
+
+test("codex: falls back to event_msg agent_message when response_item text is unavailable", async () => {
+  const file = codexFile("2024/03/20", "sess-codex-h.jsonl")
+  writeFixture(file, codexLines("codex-sess-h", [
+    { type: "event_msg", payload: { type: "agent_message", message: "Event fallback reply" } },
+    { type: "response_item", payload: { type: "reasoning", summary: [] } },
+  ]))
+
+  const result = await readLastTurn("codex", "codex-sess-h", "/any/workspace")
+  assert.equal(result, "Event fallback reply")
 })
 
 // ── Copilot ──

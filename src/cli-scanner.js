@@ -260,6 +260,22 @@ async function scanCodex(basePath) {
   const sessions = []
   if (!fs.existsSync(basePath)) return sessions
 
+  // Build a title index from ~/.codex/history.jsonl (one read for all sessions).
+  // Each line is { session_id, ts, text } — the first prompt of a session is its title.
+  const historyPath = path.join(path.dirname(basePath), "history.jsonl")
+  const titleIndex = new Map() // session_id → first user prompt text
+  try {
+    const historyRaw = await fsp.readFile(historyPath, "utf8")
+    for (const line of historyRaw.trim().split("\n")) {
+      try {
+        const entry = JSON.parse(line)
+        if (entry.session_id && entry.text && !titleIndex.has(entry.session_id)) {
+          titleIndex.set(entry.session_id, entry.text.slice(0, 120))
+        }
+      } catch {}
+    }
+  } catch {} // history.jsonl absent or unreadable — titles degrade to null
+
   const years = await fsp.readdir(basePath).catch(() => [])
   for (const year of years) {
     if (!/^\d{4}$/.test(year)) continue
@@ -306,7 +322,7 @@ async function scanCodex(basePath) {
               cli: "codex",
               session_id: sessionId,
               workspace: normalizeWorkspace(workspace),
-              title: null,
+              title: titleIndex.get(sessionId) ?? null,
               message_count: messageCount,
               last_activity: (lastActivity || new Date()).toISOString(),
               resume_cmd: `codex resume ${sessionId}`,

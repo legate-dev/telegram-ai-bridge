@@ -12,8 +12,8 @@ import { log } from "./log.js"
  * cannot be determined (unsupported CLI, file not found, parse error, empty
  * history). All errors are swallowed so a failure here never blocks the bind.
  *
- * Supported CLIs: "claude" (JSONL on disk), "kilo" (HTTP via kiloClient).
- * Other CLIs return null immediately.
+ * Supported CLIs: "claude" (JSONL on disk), "codex" (JSONL year/month/day tree),
+ * "kilo" (HTTP via kiloClient). Other CLIs return null immediately.
  *
  * @param {string} cli - CLI name ("claude", "kilo", etc.)
  * @param {string} sessionId - Session identifier
@@ -25,6 +25,9 @@ export async function readLastTurn(cli, sessionId, workspace, options = {}) {
   try {
     if (cli === "claude") {
       return await _readClaudeLastTurn(sessionId)
+    }
+    if (cli === "codex") {
+      return await _readCodexLastTurn(sessionId)
     }
     if (cli === "kilo") {
       return await _readKiloLastTurn(sessionId, workspace, options.kiloClient)
@@ -85,6 +88,66 @@ async function _readClaudeLastTurn(sessionId) {
     }
     // Found the file but no assistant text in it
     return null
+  }
+
+  return null
+}
+
+// ── Codex ──
+
+async function _readCodexLastTurn(sessionId) {
+  const basePath = config.scanPathCodex
+  if (!fs.existsSync(basePath)) return null
+
+  const years = await fsp.readdir(basePath).catch(() => [])
+  for (const year of years) {
+    if (!/^\d{4}$/.test(year)) continue
+    const months = await fsp.readdir(path.join(basePath, year)).catch(() => [])
+    for (const month of months) {
+      if (!/^\d{2}$/.test(month)) continue
+      const days = await fsp.readdir(path.join(basePath, year, month)).catch(() => [])
+      for (const day of days) {
+        if (!/^\d{2}$/.test(day)) continue
+        const dayPath = path.join(basePath, year, month, day)
+        const files = await fsp.readdir(dayPath).catch(() => [])
+
+        for (const file of files) {
+          if (!file.endsWith(".jsonl")) continue
+          const filePath = path.join(dayPath, file)
+          let raw
+          try {
+            raw = await fsp.readFile(filePath, "utf8")
+          } catch {
+            continue
+          }
+
+          const lines = raw.trim().split("\n").filter(Boolean)
+
+          // Single pass: check for session match and collect assistant events
+          let foundSession = false
+          let lastAssistantText = null
+          for (const line of lines) {
+            try {
+              const entry = JSON.parse(line)
+              if (entry.type === "session_meta" && entry.payload?.id === sessionId) {
+                foundSession = true
+              }
+              if (foundSession && entry.type === "response_item" && entry.payload?.role === "assistant") {
+                const text = entry.payload.content ?? entry.payload.text ?? entry.payload.output ?? null
+                if (text && String(text).trim()) {
+                  lastAssistantText = String(text).trim()
+                }
+              }
+            } catch {
+              // skip malformed lines
+            }
+          }
+
+          if (!foundSession) continue
+          return lastAssistantText
+        }
+      }
+    }
   }
 
   return null

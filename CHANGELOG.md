@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-04-09
+
+### Fixed
+
+- **Codex session resume broken on CLI 0.77.0+** (#29). Exec-level flags
+  (`--json`, `--skip-git-repo-check`, `-m`) were placed after the `resume`
+  subcommand, which Codex 0.77.0 rejects with exit code 2. Flags now come
+  before the subcommand. Reported with a precise repro and local fix by
+  [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans).
+
+### Documentation
+
+- Added `CONTRIBUTORS.md` listing [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans)
+  and [@Matita_Pereira](https://github.com/Matita_Pereira) with their contributions.
+
 ## [0.3.3] - 2026-04-09
 
 ### Added

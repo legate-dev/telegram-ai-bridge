@@ -28,7 +28,7 @@ export class CopilotBackend {
 
       const startedAt = Date.now()
       log.info("copilot.backend", "exec.start", { cli: "copilot", session_id: sessionId, directory, text_length: text.length })
-      const child = execFile(config.binCopilot, args, {
+      execFile(config.binCopilot, args, {
         cwd: cwdResult.cwd,
         maxBuffer: 10 * 1024 * 1024,
         timeout: config.copilotTimeoutMs,

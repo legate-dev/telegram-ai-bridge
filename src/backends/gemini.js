@@ -28,7 +28,7 @@ export class GeminiBackend {
 
       const startedAt = Date.now()
       log.info("gemini.backend", "exec.start", { cli: "gemini", session_id: sessionId, directory, text_length: text.length })
-      const child = execFile(config.binGemini, args, {
+      execFile(config.binGemini, args, {
         cwd: cwdResult.cwd,
         maxBuffer: 10 * 1024 * 1024,
         timeout: config.geminiTimeoutMs,

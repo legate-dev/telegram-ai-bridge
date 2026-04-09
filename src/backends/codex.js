@@ -27,7 +27,7 @@ export class CodexBackend {
 
       const startedAt = Date.now()
       log.info("codex.backend", "exec.start", { cli: "codex", session_id: sessionId, directory, text_length: text.length })
-      const child = execFile(config.binCodex, args, {
+      execFile(config.binCodex, args, {
         cwd: cwdResult.cwd,
         maxBuffer: 10 * 1024 * 1024, // 10MB
         timeout: config.codexTimeoutMs,

@@ -1,5 +1,4 @@
 import { statSync } from "node:fs"
-import { config } from "../config.js"
 import { log } from "../log.js"
 
 // Strip bridge-owned secrets from env before passing to CLI subprocesses.

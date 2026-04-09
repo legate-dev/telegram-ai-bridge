@@ -30,9 +30,16 @@ await mock.module("../src/log.js", {
   },
 })
 
+const copilotBaseMock = path.join(tmpDir, "copilot-mock")
+const geminiBaseMock = path.join(tmpDir, "gemini-mock")
+fs.mkdirSync(copilotBaseMock, { recursive: true })
+fs.mkdirSync(geminiBaseMock, { recursive: true })
+
 const mockConfig = {
   scanPathClaude: claudeBase,
   scanPathCodex: codexBase,
+  scanPathCopilot: copilotBaseMock,
+  scanPathGemini: geminiBaseMock,
   kiloStatusTimeoutMs: 5000,
 }
 
@@ -297,14 +304,107 @@ test("codex: returns assistant text when session_meta appears after response_ite
   assert.equal(result, "Late meta reply")
 })
 
-// ── Unsupported CLIs ──
+// ── Copilot ──
 
-test("returns null for unsupported CLI without throwing", async () => {
-  const result = await readLastTurn("gemini", "some-id", "/workspace")
+function copilotFile(sessionId) {
+  const dir = path.join(copilotBaseMock, sessionId)
+  fs.mkdirSync(dir, { recursive: true })
+  return path.join(dir, "events.jsonl")
+}
+
+test("copilot: returns last assistant.message content from JSONL", async () => {
+  writeFixture(copilotFile("cp-sess-a"), [
+    JSON.stringify({ type: "user.message", data: { content: "Hello" } }),
+    JSON.stringify({ type: "assistant.message", data: { content: "First reply" } }),
+    JSON.stringify({ type: "user.message", data: { content: "Follow up" } }),
+    JSON.stringify({ type: "assistant.message", data: { content: "Second reply" } }),
+  ].join("\n"))
+
+  const result = await readLastTurn("copilot", "cp-sess-a", "/any/workspace")
+  assert.equal(result, "Second reply")
+})
+
+test("copilot: returns null when no assistant messages present", async () => {
+  writeFixture(copilotFile("cp-sess-b"), [
+    JSON.stringify({ type: "user.message", data: { content: "Hello" } }),
+  ].join("\n"))
+
+  const result = await readLastTurn("copilot", "cp-sess-b", "/any/workspace")
   assert.equal(result, null)
 })
 
-test("returns null for copilot without throwing", async () => {
-  const result = await readLastTurn("copilot", "some-id", "/workspace")
+test("copilot: returns null when session dir does not exist", async () => {
+  const result = await readLastTurn("copilot", "cp-nonexistent-xyz", "/any/workspace")
+  assert.equal(result, null)
+})
+
+test("copilot: skips malformed lines without throwing", async () => {
+  writeFixture(copilotFile("cp-sess-c"), [
+    "not valid json",
+    JSON.stringify({ type: "assistant.message", data: { content: "Valid reply" } }),
+    "also bad json",
+  ].join("\n"))
+
+  const result = await readLastTurn("copilot", "cp-sess-c", "/any/workspace")
+  assert.equal(result, "Valid reply")
+})
+
+// ── Gemini ──
+
+function geminiFile(sessionId) {
+  const dir = path.join(geminiBaseMock, `fixture-${sessionId}`)
+  fs.mkdirSync(dir, { recursive: true })
+  return path.join(dir, "logs.json")
+}
+
+test("gemini: returns last assistant message content from logs.json", async () => {
+  writeFixture(geminiFile("gm-sess-a"), JSON.stringify([
+    { sessionId: "gm-sess-a", role: "user", content: "Hello" },
+    { sessionId: "gm-sess-a", role: "assistant", content: "First reply" },
+    { sessionId: "gm-sess-a", role: "user", content: "Follow up" },
+    { sessionId: "gm-sess-a", role: "assistant", content: "Second reply" },
+  ]))
+
+  const result = await readLastTurn("gemini", "gm-sess-a", "/any/workspace")
+  assert.equal(result, "Second reply")
+})
+
+test("gemini: falls back to text field when content is absent", async () => {
+  writeFixture(geminiFile("gm-sess-b"), JSON.stringify([
+    { sessionId: "gm-sess-b", role: "assistant", text: "Text fallback" },
+  ]))
+
+  const result = await readLastTurn("gemini", "gm-sess-b", "/any/workspace")
+  assert.equal(result, "Text fallback")
+})
+
+test("gemini: returns null when no assistant messages for sessionId", async () => {
+  writeFixture(geminiFile("gm-sess-c"), JSON.stringify([
+    { sessionId: "gm-sess-c", role: "user", content: "Hello" },
+  ]))
+
+  const result = await readLastTurn("gemini", "gm-sess-c", "/any/workspace")
+  assert.equal(result, null)
+})
+
+test("gemini: returns null when sessionId not found in any workspace", async () => {
+  const result = await readLastTurn("gemini", "gm-nonexistent-xyz", "/any/workspace")
+  assert.equal(result, null)
+})
+
+test("gemini: ignores messages from other sessions in same logs.json", async () => {
+  writeFixture(geminiFile("gm-sess-d"), JSON.stringify([
+    { sessionId: "other-sess", role: "assistant", content: "Not mine" },
+    { sessionId: "gm-sess-d", role: "assistant", content: "Mine" },
+  ]))
+
+  const result = await readLastTurn("gemini", "gm-sess-d", "/any/workspace")
+  assert.equal(result, "Mine")
+})
+
+// ── Unsupported CLIs ──
+
+test("returns null for unsupported CLI without throwing", async () => {
+  const result = await readLastTurn("xai", "some-id", "/workspace")
   assert.equal(result, null)
 })

@@ -119,7 +119,7 @@ async function _readKiloLastTurn(sessionId, workspace, kiloClient) {
 // ── Copilot ──
 
 async function _readCopilotLastTurn(sessionId) {
-  const filePath = path.join(config.scanPathCopilot, `${sessionId}.jsonl`)
+  const filePath = path.join(config.scanPathCopilot, sessionId, "events.jsonl")
   let raw
   try {
     raw = await fsp.readFile(filePath, "utf8")
@@ -144,23 +144,39 @@ async function _readCopilotLastTurn(sessionId) {
 }
 
 // ── Gemini ──
+// Gemini stores logs in per-workspace directories under scanPathGemini.
+// Each directory contains a logs.json array of { sessionId, role, content?, text?, response?, ... }.
+// We scan all directories and return the last assistant message for the requested sessionId.
 
 async function _readGeminiLastTurn(sessionId) {
-  const filePath = path.join(config.scanPathGemini, `${sessionId}.json`)
-  let raw
-  try {
-    raw = await fsp.readFile(filePath, "utf8")
-  } catch {
-    return null
+  const basePath = config.scanPathGemini
+  if (!fs.existsSync(basePath)) return null
+
+  const dirs = await fsp.readdir(basePath).catch(() => [])
+  for (const dir of dirs) {
+    if (dir.startsWith(".") || dir === "bin") continue
+    const logsPath = path.join(basePath, dir, "logs.json")
+    if (!fs.existsSync(logsPath)) continue
+
+    try {
+      const logs = JSON.parse(await fsp.readFile(logsPath, "utf8"))
+      if (!Array.isArray(logs)) continue
+
+      // Walk forward and track the last assistant message for this sessionId
+      let lastText = null
+      for (const msg of logs) {
+        if (msg.sessionId !== sessionId) continue
+        if (msg.role !== "assistant") continue
+        const text = msg.content || msg.text || msg.response
+        if (typeof text === "string" && text.trim()) {
+          lastText = text.trim()
+        }
+      }
+      if (lastText) return lastText
+    } catch {
+      // skip malformed logs.json
+    }
   }
 
-  try {
-    const parsed = JSON.parse(raw)
-    const text = parsed.response || parsed.content || parsed.text
-    if (typeof text !== "string") return null
-    const trimmed = text.trim()
-    return trimmed || null
-  } catch {
-    return null
-  }
+  return null
 }

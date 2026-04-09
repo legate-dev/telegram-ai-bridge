@@ -64,7 +64,15 @@ function copilotFile(sessionId) {
 }
 
 function geminiFile(sessionId) {
-  return path.join(geminiBase, `${sessionId}.json`)
+  // Gemini stores per-workspace dirs with logs.json arrays.
+  // Use a stable fixture dir per sessionId so tests are isolated.
+  const dir = path.join(geminiBase, `fixture-${sessionId}`)
+  fs.mkdirSync(dir, { recursive: true })
+  return path.join(dir, "logs.json")
+}
+
+function geminiMsg(sessionId, role, content) {
+  return JSON.stringify({ sessionId, role, content, timestamp: new Date().toISOString() })
 }
 
 // ── Claude tests ──
@@ -249,48 +257,47 @@ test("copilot: skips malformed lines without throwing", async () => {
 
 // ── Gemini tests ──
 
-test("gemini: returns response field from JSON file", async () => {
-  writeFixture(geminiFile("gm-sess-a"), JSON.stringify({
-    response: "The assistant reply",
-    session_id: "gm-sess-a",
-    stats: {},
-  }))
+test("gemini: returns last assistant message content from logs.json", async () => {
+  writeFixture(geminiFile("gm-sess-a"), JSON.stringify([
+    { sessionId: "gm-sess-a", role: "user", content: "Hello" },
+    { sessionId: "gm-sess-a", role: "assistant", content: "First reply" },
+    { sessionId: "gm-sess-a", role: "user", content: "Follow up" },
+    { sessionId: "gm-sess-a", role: "assistant", content: "Second reply" },
+  ]))
 
   const result = await readLastTurn("gemini", "gm-sess-a", "/any/workspace")
-  assert.equal(result, "The assistant reply")
+  assert.equal(result, "Second reply")
 })
 
-test("gemini: falls back to content field when response is absent", async () => {
-  writeFixture(geminiFile("gm-sess-b"), JSON.stringify({
-    content: "Content fallback",
-    session_id: "gm-sess-b",
-  }))
+test("gemini: falls back to text field when content is absent", async () => {
+  writeFixture(geminiFile("gm-sess-b"), JSON.stringify([
+    { sessionId: "gm-sess-b", role: "assistant", text: "Text fallback" },
+  ]))
 
   const result = await readLastTurn("gemini", "gm-sess-b", "/any/workspace")
-  assert.equal(result, "Content fallback")
-})
-
-test("gemini: falls back to text field when response and content are absent", async () => {
-  writeFixture(geminiFile("gm-sess-c"), JSON.stringify({
-    text: "Text fallback",
-    session_id: "gm-sess-c",
-  }))
-
-  const result = await readLastTurn("gemini", "gm-sess-c", "/any/workspace")
   assert.equal(result, "Text fallback")
 })
 
-test("gemini: returns null when file does not exist", async () => {
+test("gemini: returns null when no assistant messages for sessionId", async () => {
+  writeFixture(geminiFile("gm-sess-c"), JSON.stringify([
+    { sessionId: "gm-sess-c", role: "user", content: "Hello" },
+  ]))
+
+  const result = await readLastTurn("gemini", "gm-sess-c", "/any/workspace")
+  assert.equal(result, null)
+})
+
+test("gemini: returns null when sessionId not found in any workspace", async () => {
   const result = await readLastTurn("gemini", "gm-nonexistent-xyz", "/any/workspace")
   assert.equal(result, null)
 })
 
-test("gemini: returns null when JSON has no text field", async () => {
-  writeFixture(geminiFile("gm-sess-d"), JSON.stringify({
-    session_id: "gm-sess-d",
-    stats: {},
-  }))
+test("gemini: ignores messages from other sessions in same logs.json", async () => {
+  writeFixture(geminiFile("gm-sess-d"), JSON.stringify([
+    { sessionId: "other-sess", role: "assistant", content: "Not mine" },
+    { sessionId: "gm-sess-d", role: "assistant", content: "Mine" },
+  ]))
 
   const result = await readLastTurn("gemini", "gm-sess-d", "/any/workspace")
-  assert.equal(result, null)
+  assert.equal(result, "Mine")
 })

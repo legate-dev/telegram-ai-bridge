@@ -6,6 +6,7 @@ import { checkRateLimit } from "./rate-limit.js"
 import { getBackend, supportedClis } from "./backends.js"
 import { createNewSession } from "./commands.js"
 import { log, redactString } from "./log.js"
+import { readLastTurn } from "./last-turn.js"
 import {
   replyChunks,
   resolvePreferredAgent,
@@ -616,6 +617,17 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           : `Live chat not supported for ${row.cli}. Resume: ${row.resume_cmd}`,
       ].join("\n"),
     )
+
+    // Best-effort: surface the last assistant message so the user has
+    // immediate context when reopening a session.
+    try {
+      const lastText = await readLastTurn(row.cli, row.session_id, row.workspace, { kiloClient: kilo })
+      if (lastText) {
+        await ctx.reply(`↩️ Last message:\n\n${lastText}`)
+      }
+    } catch {
+      // Never let a last-turn read failure block the bind response
+    }
   })
 
   // ── Core message processing (called after fragments are coalesced) ──

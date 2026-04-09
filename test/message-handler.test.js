@@ -101,6 +101,16 @@ await mock.module("../src/commands.js", {
   },
 })
 
+const mockLastTurn = {
+  result: null,
+}
+
+await mock.module("../src/last-turn.js", {
+  namedExports: {
+    readLastTurn: async () => mockLastTurn.result,
+  },
+})
+
 await mock.module("../src/log.js", {
   namedExports: {
     log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },

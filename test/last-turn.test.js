@@ -60,7 +60,7 @@ function claudeFile(sessionId) {
 }
 
 function copilotFile(sessionId) {
-  return path.join(copilotBase, `${sessionId}.jsonl`)
+  return path.join(copilotBase, sessionId, "events.jsonl")
 }
 
 function geminiFile(sessionId) {

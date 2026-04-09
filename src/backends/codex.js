@@ -19,10 +19,12 @@ export class CodexBackend {
         return
       }
 
-      // Build args: resume existing session or exec fresh
+      // Build args: resume existing session or exec fresh.
+      // Exec-level flags (--json, --skip-git-repo-check, -m) must come before the
+      // subcommand ("resume") — Codex CLI 0.77.0+ rejects flags after the subcommand.
       const modelArgs = model ? ["-m", model] : []
       const args = sessionId
-        ? ["exec", "resume", sessionId, "--json", "--skip-git-repo-check", ...modelArgs, text]
+        ? ["exec", "--json", "--skip-git-repo-check", ...modelArgs, "resume", sessionId, text]
         : ["exec", "--json", "--skip-git-repo-check", ...modelArgs, text]
 
       const startedAt = Date.now()

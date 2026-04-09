@@ -462,7 +462,7 @@ test("resolveSessionLabel falls back to truncated session_id when neither displa
     const result = resolveSessionLabel({ cli: "codex", session_id: "sess-abc-789-xxxlong" })
     assert.equal(result, "sess-abc-789")
   } finally {
-    delete mockDb.sessionsById["codex:sess-abc-789-xxxlong"]
+    delete mockDb.sessionsById["codex:sess-abc-789"]
   }
 })
 

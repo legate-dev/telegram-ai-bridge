@@ -18,6 +18,7 @@ await mock.module("../src/db.js", {
   namedExports: {
     getChatBinding: () => null,
     recentSessions: () => [],
+    getCliSessionById: () => null,
   },
 })
 
@@ -33,7 +34,7 @@ await mock.module("../src/config.js", {
   },
 })
 
-const { formatSessionLine } = await import("../src/telegram-utils.js")
+const { formatSessionLine, resolveSessionLabel } = await import("../src/telegram-utils.js")
 
 // ── formatSessionLine redaction ──
 
@@ -92,4 +93,18 @@ test("formatSessionLine redacts GitHub personal access token in title", () => {
   // Unified gh[pusro]_ pattern collapses to gh_<REDACTED>
   assert.ok(result.includes("gh_<REDACTED>"), "should redact GitHub PAT in title")
   assert.ok(!result.includes("ghp_" + "A".repeat(36)), "should not contain the raw token")
+})
+
+// ── resolveSessionLabel redaction (real redactString in scope) ──
+
+test("resolveSessionLabel redacts LLM API key embedded in display_name", () => {
+  // binding.display_name short-circuits the DB lookup — real redactString is applied
+  const result = resolveSessionLabel({
+    cli: "codex",
+    session_id: "sess-redact-001",
+    display_name: "proj sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ more",
+    title: null,
+  })
+  assert.ok(result.includes("sk-<REDACTED>"), "should contain redacted key placeholder")
+  assert.ok(!result.includes("sk-ABCDEFGHIJ"), "should not contain the raw key")
 })

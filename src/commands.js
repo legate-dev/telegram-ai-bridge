@@ -15,6 +15,7 @@ import {
   resolveDirectory,
   compactPath,
   registerPath,
+  resolveSessionLabel,
 } from "./telegram-utils.js"
 
 export { generateSessionTitle } from "./session-title.js"
@@ -176,7 +177,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
     if (!hasBoundSession(binding)) {
       lines.push("No session bound. Use /sessions to pick one or /new to create one.")
     } else {
-      lines.push(`Session: [${binding.cli}] ${binding.session_id.slice(0, 12)}`)
+      lines.push(`Session: [${binding.cli}] ${resolveSessionLabel(binding)}`)
       if (binding.cli === "kilo") lines.push(`Agent: ${preferredAgent}`)
     }
 
@@ -412,7 +413,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
       })
       await replyChunks(
         ctx,
-        `Aborted [${binding.cli}] session ${binding.session_id.slice(0, 12)} (was: ${status?.type ?? "unknown"}).`,
+        `Aborted [${binding.cli}] session ${resolveSessionLabel(binding)} (was: ${status?.type ?? "unknown"}).`,
       )
     } catch (error) {
       await replyChunks(ctx, `Abort failed: ${redactString(error.message)}`)
@@ -664,7 +665,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
       session_id: binding.session_id,
       persist: true,
     })
-    await replyChunks(ctx, `Detached from [${binding.cli}] ${binding.session_id.slice(0, 12)}.`)
+    await replyChunks(ctx, `Detached from [${binding.cli}] ${resolveSessionLabel(binding)}.`)
   })
 
   bot.command("rename", async (ctx) => {
@@ -715,7 +716,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
     const lines = [
       "Current binding:",
       `CLI: ${binding.cli}`,
-      `Session: ${binding.session_id}`,
+      `Session: ${resolveSessionLabel(binding)}`,
       `Directory: ${displayPath(binding.directory)}`,
     ]
 
@@ -725,15 +726,6 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
 
     if (supportsModelSelection(binding) && binding.model) {
       lines.push(`Model: ${binding.model}`)
-    }
-
-    if (binding.cli === "kilo") {
-      try {
-        const session = await kilo.getSession(binding.session_id, binding.directory)
-        if (session?.title) {
-          lines.push(`Title: ${redactString(session.title)}`)
-        }
-      } catch {}
     }
 
     await replyChunks(ctx, lines.join("\n"))

@@ -55,6 +55,7 @@ await mock.module("../src/telegram-utils.js", {
     resolveDirectory: (p) => p ?? "/tmp",
     compactPath: (p) => p ?? ".",
     registerPath: (p) => `hash_${p}`,
+    resolveSessionLabel: (binding) => binding?.session_id?.slice(0, 12) ?? "unknown",
   },
 })
 

@@ -9,7 +9,7 @@ process.env.TELEGRAM_BOT_TOKEN ??= "123456:TESTTOKEN"
 process.env.LOG_LEVEL ??= "error"
 
 // Mutable state lets individual tests adjust db/config responses.
-const mockDb = { binding: null, sessions: [] }
+const mockDb = { binding: null, sessions: [], sessionsById: {} }
 const mockConfig = {
   telegramAllowedUserId: "12345",
   defaultDirectory: process.cwd(),
@@ -20,6 +20,10 @@ await mock.module("../src/db.js", {
   namedExports: {
     getChatBinding: () => mockDb.binding,
     recentSessions: () => mockDb.sessions,
+    getCliSessionById: (cli, sessionId) => {
+      const key = `${cli}:${sessionId}`
+      return Object.hasOwn(mockDb.sessionsById, key) ? mockDb.sessionsById[key] : null
+    },
   },
 })
 
@@ -45,6 +49,7 @@ const {
   timeAgo,
   compactPath,
   formatSessionLine,
+  resolveSessionLabel,
 } = await import("../src/telegram-utils.js")
 
 // ── authorizedUserId ──
@@ -412,4 +417,105 @@ test("formatSessionLine uses the first 12 chars of session_id when title is abse
   assert.ok(result.includes("abcdef123456"), "should include first 12 chars of session_id")
   assert.ok(result.includes("0 msgs"), "should show zero messages")
   assert.ok(result.includes("?"), "should show '?' for unknown activity time")
+})
+
+// ── resolveSessionLabel ──
+
+test("resolveSessionLabel returns display_name from DB when present", () => {
+  mockDb.sessionsById["codex:sess-abc-123"] = {
+    display_name: "My Codex Project",
+    title: "other title",
+  }
+  try {
+    const result = resolveSessionLabel({ cli: "codex", session_id: "sess-abc-123" })
+    assert.equal(result, "My Codex Project")
+  } finally {
+    delete mockDb.sessionsById["codex:sess-abc-123"]
+  }
+})
+
+test("resolveSessionLabel falls back to title when display_name is absent", () => {
+  mockDb.sessionsById["codex:sess-abc-456"] = {
+    display_name: null,
+    title: "My Readable Title",
+  }
+  try {
+    const result = resolveSessionLabel({ cli: "codex", session_id: "sess-abc-456" })
+    assert.equal(result, "My Readable Title")
+  } finally {
+    delete mockDb.sessionsById["codex:sess-abc-456"]
+  }
+})
+
+test("resolveSessionLabel falls back to truncated session_id when neither display_name nor title is present", () => {
+  mockDb.sessionsById["codex:sess-abc-789-xxxlong"] = {
+    display_name: null,
+    title: null,
+  }
+  try {
+    const result = resolveSessionLabel({ cli: "codex", session_id: "sess-abc-789-xxxlong" })
+    assert.equal(result, "sess-abc-789")
+  } finally {
+    delete mockDb.sessionsById["codex:sess-abc-789-xxxlong"]
+  }
+})
+
+test("resolveSessionLabel falls back to truncated session_id when session is not in DB", () => {
+  // No entry in sessionsById → getCliSessionById returns null
+  const result = resolveSessionLabel({ cli: "codex", session_id: "notindb-xyz-longid" })
+  assert.equal(result, "notindb-xyz-")
+})
+
+test("resolveSessionLabel returns 'unknown' when binding is null", () => {
+  assert.equal(resolveSessionLabel(null), "unknown")
+})
+
+test("resolveSessionLabel returns 'unknown' when binding has no session_id", () => {
+  assert.equal(resolveSessionLabel({ cli: "codex" }), "unknown")
+})
+
+test("resolveSessionLabel short-circuits using binding.display_name without a DB lookup", () => {
+  // The binding already carries display_name — no DB entry is needed
+  const result = resolveSessionLabel({
+    cli: "codex",
+    session_id: "sess-shortcircuit",
+    display_name: "Inline Name",
+    title: null,
+  })
+  assert.equal(result, "Inline Name")
+})
+
+test("resolveSessionLabel short-circuits using binding.title when display_name is absent", () => {
+  const result = resolveSessionLabel({
+    cli: "codex",
+    session_id: "sess-sc-title",
+    display_name: null,
+    title: "Inline Title",
+  })
+  assert.equal(result, "Inline Title")
+})
+
+test("resolveSessionLabel normalizes newlines and tabs to spaces", () => {
+  mockDb.sessionsById["codex:sess-ctrl"] = {
+    display_name: "line1\nline2\ttab",
+    title: null,
+  }
+  try {
+    const result = resolveSessionLabel({ cli: "codex", session_id: "sess-ctrl" })
+    assert.ok(!result.includes("\n"), "newline should be removed")
+    assert.ok(!result.includes("\t"), "tab should be removed")
+  } finally {
+    delete mockDb.sessionsById["codex:sess-ctrl"]
+  }
+})
+
+test("resolveSessionLabel caps label at 50 characters", () => {
+  const longName = "a".repeat(80)
+  mockDb.sessionsById["codex:sess-long"] = { display_name: longName, title: null }
+  try {
+    const result = resolveSessionLabel({ cli: "codex", session_id: "sess-long" })
+    assert.ok(result.length <= 50, `label length should be ≤50, got ${result.length}`)
+  } finally {
+    delete mockDb.sessionsById["codex:sess-long"]
+  }
 })

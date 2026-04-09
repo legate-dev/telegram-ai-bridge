@@ -210,6 +210,8 @@ The consequence: **anyone holding your `TELEGRAM_BOT_TOKEN` has arbitrary code e
 
 **Treat the bot token like an SSH private key.** Never commit it. Never paste it in screenshots. Never log it. If you suspect it leaked, revoke the bot via [@BotFather](https://t.me/BotFather) immediately and create a new one.
 
+**One token, one machine.** Do not run the same bot token on multiple hosts or bridge instances simultaneously. With multiple `getUpdates` long-pollers, the instances will race for updates: a given update may be handled by either instance, and independent `offset` management can also cause duplicates or missed updates. The result is conversations splitting unpredictably between machines and sessions breaking mid-conversation. If you want the bridge on more than one host, create a separate bot per machine via BotFather.
+
 The CLI provider API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, etc.) are managed by their respective CLIs (typically in `~/.codex/auth.json`, `~/.claude/credentials.json`, etc.), not by the bridge. The bridge does not read, store, or filter them — they live where their owning CLI puts them. Filtering them out of the bridge's child-process environment would not protect them, because a compromised CLI session can read any file the user can read.
 
 ### Hardening roadmap

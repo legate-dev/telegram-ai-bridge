@@ -13,7 +13,8 @@ import { log } from "./log.js"
  * history). All errors are swallowed so a failure here never blocks the bind.
  *
  * Supported CLIs: "claude" (JSONL on disk), "codex" (JSONL year/month/day tree),
- * "kilo" (HTTP via kiloClient). Other CLIs return null immediately.
+ * "kilo" (HTTP via kiloClient), "copilot" (JSONL per-session dir),
+ * "gemini" (logs.json per-workspace dir). Other CLIs return null immediately.
  *
  * @param {string} cli - CLI name ("claude", "kilo", etc.)
  * @param {string} sessionId - Session identifier
@@ -31,6 +32,12 @@ export async function readLastTurn(cli, sessionId, workspace, options = {}) {
     }
     if (cli === "kilo") {
       return await _readKiloLastTurn(sessionId, workspace, options.kiloClient)
+    }
+    if (cli === "copilot") {
+      return await _readCopilotLastTurn(sessionId)
+    }
+    if (cli === "gemini") {
+      return await _readGeminiLastTurn(sessionId)
     }
     return null
   } catch (error) {
@@ -148,6 +155,69 @@ async function _readCodexLastTurn(sessionId) {
           return lastAssistantText
         }
       }
+    }
+  }
+
+  return null
+}
+
+// ── Copilot ──
+// Copilot session state lives at {scanPathCopilot}/{sessionId}/events.jsonl
+
+async function _readCopilotLastTurn(sessionId) {
+  const filePath = path.join(config.scanPathCopilot, sessionId, "events.jsonl")
+  let raw
+  try {
+    raw = await fsp.readFile(filePath, "utf8")
+  } catch {
+    return null
+  }
+
+  const lines = raw.trim().split("\n").filter(Boolean)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const event = JSON.parse(lines[i])
+      if (event.type === "assistant.message" && event.data?.content) {
+        return event.data.content
+      }
+    } catch {
+      // skip malformed lines
+    }
+  }
+
+  return null
+}
+
+// ── Gemini ──
+// Gemini stores logs in per-workspace directories under scanPathGemini.
+// Each directory contains a logs.json array of { sessionId, role, content?, text?, ... }.
+
+async function _readGeminiLastTurn(sessionId) {
+  const basePath = config.scanPathGemini
+  if (!fs.existsSync(basePath)) return null
+
+  const dirs = await fsp.readdir(basePath).catch(() => [])
+  for (const dir of dirs) {
+    if (dir.startsWith(".") || dir === "bin") continue
+    const logsPath = path.join(basePath, dir, "logs.json")
+    if (!fs.existsSync(logsPath)) continue
+
+    try {
+      const logs = JSON.parse(await fsp.readFile(logsPath, "utf8"))
+      if (!Array.isArray(logs)) continue
+
+      let lastText = null
+      for (const msg of logs) {
+        if (msg.sessionId !== sessionId) continue
+        if (msg.role !== "assistant") continue
+        const text = msg.content || msg.text || msg.response
+        if (typeof text === "string" && text.trim()) {
+          lastText = text.trim()
+        }
+      }
+      if (lastText) return lastText
+    } catch {
+      // skip malformed logs.json
     }
   }
 

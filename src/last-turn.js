@@ -12,10 +12,11 @@ import { log } from "./log.js"
  * cannot be determined (unsupported CLI, file not found, parse error, empty
  * history). All errors are swallowed so a failure here never blocks the bind.
  *
- * Supported CLIs: "claude" (JSONL on disk), "kilo" (HTTP via kiloClient).
+ * Supported CLIs: "claude" (JSONL on disk), "kilo" (HTTP via kiloClient),
+ * "copilot" (JSONL on disk), "gemini" (JSON on disk).
  * Other CLIs return null immediately.
  *
- * @param {string} cli - CLI name ("claude", "kilo", etc.)
+ * @param {string} cli - CLI name ("claude", "kilo", "copilot", "gemini", etc.)
  * @param {string} sessionId - Session identifier
  * @param {string} workspace - Workspace/directory path for the session
  * @param {{ kiloClient?: object }} [options]
@@ -28,6 +29,12 @@ export async function readLastTurn(cli, sessionId, workspace, options = {}) {
     }
     if (cli === "kilo") {
       return await _readKiloLastTurn(sessionId, workspace, options.kiloClient)
+    }
+    if (cli === "copilot") {
+      return await _readCopilotLastTurn(sessionId)
+    }
+    if (cli === "gemini") {
+      return await _readGeminiLastTurn(sessionId)
     }
     return null
   } catch (error) {
@@ -107,4 +114,50 @@ async function _readKiloLastTurn(sessionId, workspace, kiloClient) {
   }
 
   return null
+}
+
+// ── Copilot ──
+
+async function _readCopilotLastTurn(sessionId) {
+  const filePath = path.join(config.scanPathCopilot, `${sessionId}.jsonl`)
+  let raw
+  try {
+    raw = await fsp.readFile(filePath, "utf8")
+  } catch {
+    return null
+  }
+
+  const lines = raw.trim().split("\n").filter(Boolean)
+  // Scan from the end to find the most-recent assistant.message entry
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const event = JSON.parse(lines[i])
+      if (event.type === "assistant.message" && event.data?.content) {
+        return event.data.content
+      }
+    } catch {
+      // skip malformed lines
+    }
+  }
+
+  return null
+}
+
+// ── Gemini ──
+
+async function _readGeminiLastTurn(sessionId) {
+  const filePath = path.join(config.scanPathGemini, `${sessionId}.json`)
+  let raw
+  try {
+    raw = await fsp.readFile(filePath, "utf8")
+  } catch {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed.response || parsed.content || parsed.text || null
+  } catch {
+    return null
+  }
 }

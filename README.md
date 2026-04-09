@@ -309,6 +309,10 @@ launchctl load ~/Library/LaunchAgents/com.telegram-ai-bridge.bot.plist
 
 > launchd does not source `~/.zshrc`. Set `BIN_CODEX`, `BIN_COPILOT`, etc. in `.env` with absolute paths if needed. The bridge spawns `kilo serve` itself via a login shell (`KILO_SERVE_SHELL`, default `$SHELL`), so no separate launchd service for Kilo is needed.
 
+## Acknowledgments
+
+Thanks to [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans) and [@Matita_Pereira](https://github.com/Matita_Pereira) for beta testing the bridge on their own machines and filing real-world bug reports — the kind that only surface when someone other than the author is running the thing. Several significant fixes and features came directly from their issues.
+
 ## License
 
 MIT

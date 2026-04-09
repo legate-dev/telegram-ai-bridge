@@ -13,6 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-09
+
+### Added
+
+- **Last message preview on session bind** (#19). When reopening or binding
+  an existing session, the bridge surfaces the last assistant message so you
+  have immediate context without having to remember where the conversation
+  stopped. Supported backends: Claude (JSONL on disk), Kilo (HTTP API), Codex
+  (session JSONL), Copilot (`events.jsonl`), Gemini (`logs.json`).
+
+### Fixed
+
+- **Session labels now show human-readable names for all CLIs** (#18). Commands
+  `/start`, `/status`, `/abort`, `/detach` and bind confirmations previously
+  showed a raw truncated session ID for non-Kilo backends. All commands now
+  resolve the label as `display_name → title → truncated session_id`.
+- **Codex sessions now display a readable title** (#26). The Codex scanner
+  previously stored `title: null` for every session. Titles are now derived
+  from the first user prompt in `~/.codex/history.jsonl` — the same approach
+  Claude uses with its own session files. Degrades gracefully if the file is
+  absent.
+
 ## [0.3.2] - 2026-04-09
 
 ### Fixed

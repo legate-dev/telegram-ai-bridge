@@ -1,6 +1,6 @@
 {
   "name": "telegram-ai-bridge",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Telegram ↔ AI coding CLIs bridge. Chat with Kilo, Codex, Copilot, Gemini, and Claude Code from your phone.",
   "repository": {
     "type": "git",

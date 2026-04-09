@@ -313,6 +313,8 @@ launchctl load ~/Library/LaunchAgents/com.telegram-ai-bridge.bot.plist
 
 Thanks to [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans) and [@Matita_Pereira](https://github.com/Matita_Pereira) for beta testing the bridge on their own machines and filing real-world bug reports — the kind that only surface when someone other than the author is running the thing. Several significant fixes and features came directly from their issues.
 
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for the full list.
+
 ## License
 
 MIT

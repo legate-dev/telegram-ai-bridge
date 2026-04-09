@@ -153,13 +153,9 @@ export function validateWorkspaceDirectory(directory) {
 }
 
 export function displayPath(input) {
-  if (!input) return "."
+  if (!input) return "~"
   const absolute = path.resolve(input)
   const home = os.homedir()
-  if (absolute === process.cwd()) return "."
-  if (absolute.startsWith(`${process.cwd()}${path.sep}`)) {
-    return path.relative(process.cwd(), absolute) || "."
-  }
   if (absolute === home) return "~"
   if (absolute.startsWith(`${home}${path.sep}`)) {
     return `~/${path.relative(home, absolute)}`

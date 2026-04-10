@@ -273,6 +273,16 @@ async function surfacePermission(ctx, permissionData, chatKey, binding, agent, b
     .text("✓✓ Always allow", `perm:always:${requestId}`)
     .text("❌ Deny", `perm:deny:${requestId}`)
 
+  // "Allow everything" — available only for Kilo, which has a dedicated REST
+  // endpoint (POST /allow-everything) that resolves the current pending request
+  // AND sets a wildcard rule so future permissions are auto-approved.
+  if (typeof backend?.kilo?.allowEverything === "function") {
+    keyboard
+      .row()
+      .text("⚡ Allow everything (session)", `ae:session:${requestId}`)
+      .text("🌐 Allow everything (global)", `ae:global:${requestId}`)
+  }
+
   setPendingPermission(chatKey, { binding, agent, backend, requestId, text, sessionId, directory, messageCountBefore })
 
   await replyChunks(ctx, text)
@@ -416,6 +426,126 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
     }
 
     // Permission response from inline keyboard (mid-turn Kilo permission request)
+    // ── Allow everything (Kilo only) ──────────────────────────────────────────
+    // Format: ae:<scope>:<requestId>  scope = "session" | "global"
+    // Calls POST /allow-everything which resolves the current pending request,
+    // drains all other pending permissions, and sets a wildcard rule so future
+    // tool calls are auto-approved without further prompts.
+    if (data.startsWith("ae:")) {
+      const chatKey = String(ctx.chat.id)
+      const firstColon = data.indexOf(":")
+      const secondColon = data.indexOf(":", firstColon + 1)
+      const scope = secondColon !== -1 ? data.slice(firstColon + 1, secondColon) : ""
+      const requestId = secondColon !== -1 ? data.slice(secondColon + 1) : ""
+
+      // Validate shape and scope before touching any state
+      if (secondColon === -1 || !["session", "global"].includes(scope) || !requestId) {
+        await ctx.answerCallbackQuery({ text: "Invalid action.", show_alert: true })
+        return
+      }
+
+      const pending = pendingPermissions.get(chatKey)
+      if (!pending || pending.requestId !== requestId) {
+        await ctx.answerCallbackQuery({ text: "No pending permission or stale request.", show_alert: true })
+        return
+      }
+
+      // Capability check — ae: is Kilo-only; a forged callback while a Claude
+      // permission is pending would otherwise throw and confuse the user.
+      if (typeof pending.backend?.kilo?.allowEverything !== "function") {
+        await ctx.answerCallbackQuery({ text: "Unsupported action for this backend.", show_alert: true })
+        return
+      }
+
+      // Session-scoped allow-everything requires a known session ID
+      if (scope === "session" && !pending.sessionId) {
+        await ctx.answerCallbackQuery({ text: "No session ID available for session-scoped allow.", show_alert: true })
+        return
+      }
+
+      if (pending.replying) {
+        await ctx.answerCallbackQuery({ text: "Already processing…", show_alert: true })
+        return
+      }
+      pending.replying = true
+
+      const label = scope === "global" ? "🌐 Allow everything (global)" : "⚡ Allow everything (session)"
+      await ctx.answerCallbackQuery({ text: label })
+
+      try {
+        const opts = { enable: true, requestID: requestId }
+        if (scope === "session") opts.sessionID = pending.sessionId
+        await pending.backend.kilo.allowEverything(opts)
+
+        // Kilo drains its full pending queue server-side. Clear any stale
+        // Kilo permission entries from other chats so their keyboard buttons
+        // don't attempt to reply to already-drained requests.
+        for (const [key, entry] of pendingPermissions.entries()) {
+          if (key !== chatKey && entry.binding?.cli === "kilo") {
+            deletePendingPermission(key)
+          }
+        }
+
+        // Lock inFlightChats before releasing the permission guard (same as perm: path).
+        const canResume = pending.sessionId != null && pending.backend?.resumeTurn != null
+        if (canResume) inFlightChats.add(chatKey)
+        deletePendingPermission(chatKey)
+        try { await ctx.editMessageText(`${pending.text}\n\n${label}`) } catch {}
+        log.info("telegram.callback", "allow_everything", {
+          chat_id: chatKey,
+          request_id: requestId,
+          scope,
+          persist: true,
+        })
+
+        if (canResume) {
+          try {
+            const resumeResult = await pending.backend.resumeTurn(
+              pending.sessionId, pending.directory, pending.messageCountBefore,
+            )
+            if (resumeResult.permission) {
+              await surfacePermission(
+                ctx, resumeResult.permission, chatKey,
+                pending.binding, pending.agent, pending.backend,
+                pending.sessionId, pending.directory,
+                resumeResult.messageCountBefore ?? pending.messageCountBefore,
+              )
+            } else if (resumeResult.question) {
+              await surfaceQuestion(ctx, resumeResult.question, chatKey, pending.binding, pending.agent, pending.backend)
+            } else if (resumeResult.text) {
+              await replyChunks(ctx, resumeResult.text)
+            } else if (resumeResult.error) {
+              await replyChunks(ctx, `kilo error: ${redactString(resumeResult.error)}`)
+            }
+          } catch (resumeErr) {
+            log.error("telegram.callback", "allow_everything_resume_failed", {
+              chat_id: chatKey,
+              request_id: requestId,
+              error: redactString(String(resumeErr)),
+              persist: true,
+            })
+            try {
+              await ctx.reply(`Allow everything succeeded but the turn could not be resumed: ${redactString(resumeErr.message)}`)
+            } catch { /* best-effort */ }
+          } finally {
+            inFlightChats.delete(chatKey)
+          }
+        }
+      } catch (err) {
+        pending.replying = false
+        log.error("telegram.callback", "allow_everything_failed", {
+          chat_id: chatKey,
+          request_id: requestId,
+          error: redactString(String(err)),
+          persist: true,
+        })
+        try {
+          await ctx.reply(`Failed to enable allow everything: ${redactString(err.message)}`)
+        } catch { /* best-effort */ }
+      }
+      return
+    }
+
     if (data.startsWith("perm:")) {
       const chatKey = String(ctx.chat.id)
       const parts = data.split(":")

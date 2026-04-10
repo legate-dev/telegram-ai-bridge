@@ -52,7 +52,6 @@
 
 - `LOG_FILE_PATH` is the primary live tail surface
 - `LOG_DB_PATH` is the primary historical debugging surface
-- Raw Gemini JSON fallback must leave a persisted warning event
 - Backend exceptions must leave a persisted error event
 - `persist: true` is reserved for low-frequency diagnostic events, never for heartbeat-style noise
 - **`binding.thread_update_skipped`** — Emitted when a long-running turn returned a new threadId but the user changed their binding during the turn. Indicates a successful race condition mitigation. Non-zero rate is informational, not a problem.
@@ -110,7 +109,7 @@
 
 ### P3 — CLI argument spoofing via leading hyphen in user prompt
 
-- **Trigger:** From the pre-public tripartite (Gemini R1, `review/pre-public-v031-security-input-gemini.md`). Each exec backend (`src/backends.js` Codex/Copilot/Gemini/Claude) appends the user's prompt as the last positional argument of an `execFile` call without a `--` terminator. A prompt like `--help` or `--version` will therefore be parsed by the target CLI as a flag instead of a prompt payload
+- **Trigger:** From the pre-public tripartite (Gemini R1, `review/pre-public-v031-security-input-gemini.md`). Codex and Copilot append the user's prompt as the last positional argument of an `execFile` call without a `--` terminator. A prompt like `--help` or `--version` will therefore be parsed by the target CLI as a flag instead of a prompt payload. Claude and Gemini are not affected — both now deliver the prompt via stdin (stream-json), not as a positional argument
 - **Blast radius:** Functional only — the user is already authenticated; they can already ask the AI to do anything. The worst case is the bridge returning raw CLI `--help` output and failing JSON parsing, surfacing a confusing "parser failure" error instead of an AI turn. No privilege escalation, no injection beyond what the user already has
 - **Fix:** Append `--` before the positional `text` argument in each backend's `args` array. Verify each CLI's argument parser supports `--` as an end-of-options terminator (most GNU-style parsers do; exotic CLIs may need a workaround)
 - **Done when:** Sending `--help` as a Telegram message to a bound session returns an AI turn, not a CLI help dump
@@ -180,6 +179,6 @@ All items below were resolved during the initial hardening session and Copilot a
 |------|---------|----------------------|------------------|
 | Auth | Unauthorized Telegram user | Reject request | NDJSON + persisted warn/error |
 | Transport | `ECONNREFUSED`, timeout | Explain backend unavailable | NDJSON + persisted error |
-| Parser | Gemini returns raw JSON blob | Fallback or explicit error | Persisted warning event |
+| Parser | CLI exits without a `result` event | Structured error surfaced to user | Persisted error event |
 | Session state | Kilo busy/stuck | Abort or advise `/new` | Persisted warning event |
 | Formatting | Telegram Markdown parse failure | Plain-text fallback | NDJSON warning |

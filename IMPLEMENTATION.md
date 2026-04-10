@@ -236,8 +236,8 @@ Send messages to multiple CLI backends from Telegram.
 - [x] `KiloBackend` — wraps KiloClient (HTTP API to `kilo serve`)
 - [x] `CodexBackend` — `codex exec --json` via child_process with JSONL parsing
 - [x] `CopilotBackend` — `copilot -p --output-format json` via child_process
-- [x] `GeminiBackend` — `gemini -p -o json -y` via child_process
-- [x] `ClaudeBackend` — `claude -p --output-format json` via child_process
+- [x] `GeminiBackend` — `gemini --output-format stream-json -y` via `spawn` (AsyncGenerator)
+- [x] `ClaudeBackend` — `claude --output-format stream-json` via `spawn` (AsyncGenerator; interactive permission prompts opt-in)
 - [x] `/new` shows CLI picker (inline keyboard) when multiple backends available
 - [x] Message handler routes to correct backend based on `binding.cli`
 - [x] Unsupported CLIs show helpful message with list of supported ones
@@ -268,10 +268,10 @@ Promoted Claude from session discovery to first-class live chat backend.
 
 **Gate:** Send a message from Telegram to a bound Claude session and receive a real Claude response.
 
-- [x] `claude -p --output-format json` produces clean JSONL (system, assistant, result events)
+- [x] `claude --output-format stream-json` streams events via AsyncGenerator (`text`, `thinking`, `tool_use`, `permission`, `result`)
 - [x] `ClaudeBackend` with session resume via `-r <session-id>`
-- [x] JSONL parser extracts `assistant.message.content[].text` and `result.session_id`
-- [x] `--permission-mode bypassPermissions` for unattended execution
+- [x] AsyncGenerator parser accumulates text chunks and extracts `result.session_id`
+- [x] Permission mode: `--permission-mode bypassPermissions` (default) or `--permission-prompt-tool stdio` (opt-in interactive, `BRIDGE_CLAUDE_DANGEROUS_SKIP_PERMISSIONS=false`)
 - [x] Full MCP toolstack available (memory, RAG, etc.)
 - [x] End-to-end verified from Telegram
 

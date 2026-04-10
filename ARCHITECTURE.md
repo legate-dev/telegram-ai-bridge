@@ -71,7 +71,7 @@ getSessionStatus(sessionId)
 Kilo has a runtime permission engine that pauses a turn server-side when the AI wants to execute a sensitive tool call (bash, edit, write) and waits for explicit approval via `POST /permission/:id/reply`. Before PR #131 the bridge was blind to this engine — the user never saw the approval prompt and the turn would hang. The Kilo backend now implements the full round-trip:
 
 1. **Poll** — during `waitForTurn`, every `permissionCheckEveryNPolls = 2` iterations, the client calls `GET /permission` to fetch the pending-permission queue. The queue is **project-wide** (not session-scoped), so `_checkForPendingPermission(sessionId)` filters by `req.sessionID === sessionId` before returning
-2. **Surface** — when a matching pending permission is detected, `KiloBackend.sendMessage` returns `{ permission, messageCountBefore }` (instead of aborting the turn). The message handler calls `surfacePermission` which stores a `pendingPermissions[chatKey]` entry with TTL and sends the user an inline keyboard with three buttons: `✅ Allow once` / `✓✓ Always allow` / `❌ Deny`. **The original turn is NOT aborted** — Kilo holds it server-side waiting for the reply
+2. **Surface** — when a matching pending permission is detected, `KiloBackend.sendMessage` returns `{ permission, messageCountBefore }` (instead of aborting the turn). The message handler calls `surfacePermission` which stores a `pendingPermissions[chatKey]` entry with TTL and sends the user an inline keyboard with five buttons across two rows: `✅ Allow once` / `✓✓ Always allow` / `❌ Deny` and `⚡ Allow everything (session)` / `🌐 Allow everything (global)`. **The original turn is NOT aborted** — Kilo holds it server-side waiting for the reply
 3. **Reply** — when the user taps a button, the callback handler validates the untrusted reply value against `{once, always, deny}`, checks for stale requestId, guards against concurrent taps via `pending.replying` flag, answers the Telegram callback immediately (before the network POST to respect Telegram's ~10 s deadline), then calls `POST /permission/:id/reply` with the reply value (`deny` maps to Kilo's `reject`)
 4. **Resume** — if the POST succeeds, the handler calls `pending.backend.resumeTurn(sessionId, directory, messageCountBefore)` to continue the paused Kilo turn. `resumeTurn` can itself return `{ permission }` (nested permission chain, recursive surfacing), `{ question }` (mid-resume `mcp_question`, normal question surfacing), `{ text }` (model output, normal reply), or `{ error }` (surface error to user)
 
@@ -93,20 +93,24 @@ See DECISION_LOG 2026-04-08 for the full architectural rationale, alternatives c
 - Session resume via `--resume=<session-id>`
 - Supports `--effort` for reasoning levels
 
-### Claude Code Backend (child_process)
+### Claude Code Backend (spawn + AsyncGenerator)
 
-- Spawns `claude -p <prompt> --output-format json --permission-mode bypassPermissions`
-- Parses JSONL output: `system` (init + session_id), `assistant` (message content), `result` (final)
+- Spawns `claude --input-format stream-json --output-format stream-json` per turn; user prompt delivered on stdin as a stream-json message; stdin closed after send
+- Streams events via AsyncGenerator: `text`, `thinking`, `tool_use`, `permission`, `result`, `error`
+- Permission mode controlled by `BRIDGE_CLAUDE_DANGEROUS_SKIP_PERMISSIONS` (default `true`):
+  - `true` — `--permission-mode bypassPermissions` (all tools auto-approved)
+  - `false` — `--permission-prompt-tool stdio` (permission events surface as Telegram inline keyboard)
 - Session resume via `-r <session-id>`
 - Full MCP toolstack available (memory, RAG, etc.)
 - Supports `--model` (sonnet, opus) and `--effort` (low, medium, high, max)
 
-### Gemini Backend (child_process)
+### Gemini Backend (spawn + AsyncGenerator)
 
-- Spawns `gemini -p <prompt> -o json -y`
-- Parses JSON output with fallback to raw text
+- Spawns `gemini --output-format stream-json -y` per turn; prompt delivered via `-p <prompt>`
+- Streams events via AsyncGenerator: `text`, `tool_use`, `result`, `error` (no `permission` events — Gemini CLI has no stdio permission protocol; `-y` keeps auto-approve)
+- `delta:true` chunks forwarded immediately; `delta:false` reasoning fragments buffered and discarded if a `tool_use` follows, flushed as text at `result`
 - Session resume via `-r <session-id>`
-- Handles quota exhaustion gracefully
+- Handles quota exhaustion and spawn errors (ENOENT) gracefully
 
 ## Components
 
@@ -208,7 +212,8 @@ All `ALTER TABLE ADD COLUMN` migrations in `src/db.js` must also appear in the c
 | Runtime | Node.js 22+ | Same as ecosystem |
 | Telegram lib | grammY | TypeScript-first, middleware, excellent docs |
 | Kilo interface | `kilo serve` HTTP | Persistent, session-aware |
-| CLI interface | `child_process.execFile` | Codex, Copilot, Gemini |
+| CLI interface (exec) | `child_process.execFile` | Codex, Copilot |
+| CLI interface (stream) | `child_process.spawn` + AsyncGenerator | Claude Code, Gemini |
 | Config | env vars | Simple, twelve-factor |
 | State | SQLite | Session bindings + scanned CLI sessions (`cli_sessions` table includes `source` for declarative ownership and `kilo_messages_seen_at` for per-row count cache) |
 | Hosting | Always-on machine | Same host as CLI tools |

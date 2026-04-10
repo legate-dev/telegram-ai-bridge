@@ -109,6 +109,7 @@ export function createMockGeneratorBackend(events) {
     replyPermissionCalls: [],
     replyPermission(requestId, decision) {
       this.replyPermissionCalls.push({ requestId, decision })
+      return Promise.resolve()
     },
     async *sendMessage() {
       for (const event of events) yield event

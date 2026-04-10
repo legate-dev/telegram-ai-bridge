@@ -757,6 +757,8 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           } else if (event.type === "permission") {
             await surfacePermission(
               ctx, event, chatKey, binding, agent, backend,
+              // messageCountBefore is used by the Kilo resumeTurn path; the
+              // Claude AsyncGenerator path does not use it, so -1 is a sentinel.
               binding.session_id, binding.directory, -1,
             )
             seenPermission = true
@@ -787,7 +789,10 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           }
         }
 
-        const accumulated = textParts.join("\n\n")
+        // Streaming text events are partial chunks that form one continuous
+        // response — join without separator, unlike the batch path which joins
+        // independent content blocks with paragraph breaks.
+        const accumulated = textParts.join("")
         if (accumulated) {
           await replyChunks(ctx, accumulated)
         } else if (!seenPermission) {

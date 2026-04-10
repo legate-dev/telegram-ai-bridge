@@ -113,6 +113,10 @@ export const config = {
   copilotTimeoutMs: parseInt(value("COPILOT_TIMEOUT_MS", "300000"), 10),
   geminiTimeoutMs: parseInt(value("GEMINI_TIMEOUT_MS", "300000"), 10),
   claudeTimeoutMs: parseInt(value("CLAUDE_TIMEOUT_MS", "300000"), 10),
+  // When true (default): passes --permission-mode bypassPermissions — all tools auto-approved.
+  // When false: passes --permission-prompt-tool stdio — permission requests surface via Telegram.
+  // Set to "false" to opt into interactive permission handling.
+  claudeDangerousSkipPermissions: value("BRIDGE_CLAUDE_DANGEROUS_SKIP_PERMISSIONS", "true") !== "false",
 
   // CLI binary paths (override for launchd / non-interactive environments)
   binCodex: value("BIN_CODEX", "codex"),

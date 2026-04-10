@@ -17,6 +17,8 @@ await mock.module("node:child_process", {
       return { pid: 12345 }
     },
     execFileSync: () => "",
+    // ClaudeBackend uses spawn (not execFile) — provide a no-op so the import succeeds
+    spawn: () => ({ stdin: { write: () => {}, end: () => {} }, stdout: { on: () => {} }, stderr: { on: () => {} }, kill: () => {}, killed: false }),
   },
 })
 
@@ -79,10 +81,5 @@ test("GeminiBackend passes stdio: ['ignore','pipe','pipe'] to execFile", async (
   assert.deepEqual(capturedOptions.stdio, ["ignore", "pipe", "pipe"])
 })
 
-test("ClaudeBackend passes stdio: ['ignore','pipe','pipe'] to execFile", async () => {
-  capturedOptions = null
-  const backend = new ClaudeBackend()
-  await backend.sendMessage({ sessionId: null, directory: tmpdir(), text: "hi" })
-  assert.ok(capturedOptions !== null, "execFile should have been called")
-  assert.deepEqual(capturedOptions.stdio, ["ignore", "pipe", "pipe"])
-})
+// ClaudeBackend now uses spawn (not execFile) with stdio: ["pipe","pipe","pipe"].
+// Spawn-level behavior is covered by integration tests in claude-parser.test.js.

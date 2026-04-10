@@ -91,7 +91,8 @@ export class GeminiBackend {
       args.push("-r", sessionId)
     }
 
-    if (config.geminiModel) args.push("-m", config.geminiModel)
+    // Model selection for Gemini is not currently supported (API_CONTRACT.md).
+    // Accept it from opts for forward-compatibility but do not pass it yet.
 
     args.push("-p", text)
 
@@ -108,11 +109,25 @@ export class GeminiBackend {
       stdio: ["ignore", "pipe", "pipe"],
     })
 
-    const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity })
-    const stderrChunks = []
-    proc.stderr.on("data", (chunk) => stderrChunks.push(chunk))
+    // Capture spawn errors (e.g. ENOENT when binary is missing).
+    // Without this handler Node.js would treat it as an uncaught exception.
+    let spawnError = null
+    proc.on("error", (err) => { spawnError = err })
 
+    const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity })
+
+    // Collect stderr via a Promise so we can await it after the readline loop
+    // ends, avoiding a race where stderrChunks is read before the data events fire.
+    const stderrPromise = new Promise((resolve) => {
+      const chunks = []
+      proc.stderr.on("data", (chunk) => chunks.push(chunk))
+      proc.stderr.on("end", () => resolve(Buffer.concat(chunks).toString().trim()))
+      proc.stderr.on("error", () => resolve(""))
+    })
+
+    let timedOut = false
     const timeoutId = setTimeout(() => {
+      timedOut = true
       log.warn("gemini.backend", "exec.timeout", {
         cli: "gemini",
         session_id: sessionId,
@@ -217,9 +232,18 @@ export class GeminiBackend {
         }
       }
 
-      // stdout closed without a result event (crash / timeout / SIGTERM)
+      // stdout closed without a result event (crash / timeout / SIGTERM / spawn error)
       if (!hadResult) {
-        const stderr = Buffer.concat(stderrChunks).toString().trim()
+        if (spawnError) {
+          yield { type: "error", message: `Gemini failed to start: ${spawnError.message}` }
+          return
+        }
+        if (timedOut) {
+          yield { type: "error", message: `Gemini timed out (${config.geminiTimeoutMs}ms)` }
+          return
+        }
+        // Await the promise so all stderr data is flushed before we read it
+        const stderr = await stderrPromise
         if (stderr.includes("exhausted your capacity")) {
           yield { type: "error", message: "Gemini quota exhausted. Try again shortly." }
           return

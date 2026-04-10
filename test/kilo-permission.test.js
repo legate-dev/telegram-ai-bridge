@@ -168,6 +168,49 @@ test("replyToPermission sends reply='reject' when called with 'reject'", async (
   assert.deepEqual(capturedBody, { reply: "reject" })
 })
 
+// ── Test 7: allowEverything POSTs to /allow-everything ───────────────────────
+
+test("allowEverything POSTs to /allow-everything with enable and requestID (global)", async () => {
+  const client = makeKiloClient()
+  let capturedUrl
+  let capturedBody
+
+  const original = globalThis.fetch
+  globalThis.fetch = async (url, opts) => {
+    capturedUrl = url.toString()
+    capturedBody = JSON.parse(opts.body)
+    return { ok: true, status: 200, statusText: "OK", async text() { return '{}' } }
+  }
+
+  try {
+    await client.allowEverything({ enable: true, requestID: "req-global" })
+  } finally {
+    globalThis.fetch = original
+  }
+
+  assert.ok(capturedUrl.includes("/allow-everything"), `expected /allow-everything, got: ${capturedUrl}`)
+  assert.deepEqual(capturedBody, { enable: true, requestID: "req-global" })
+})
+
+test("allowEverything includes sessionID in body for session-scoped call", async () => {
+  const client = makeKiloClient()
+  let capturedBody
+
+  const original = globalThis.fetch
+  globalThis.fetch = async (_url, opts) => {
+    capturedBody = JSON.parse(opts.body)
+    return { ok: true, status: 200, statusText: "OK", async text() { return '{}' } }
+  }
+
+  try {
+    await client.allowEverything({ enable: true, sessionID: "sess-abc", requestID: "req-sess" })
+  } finally {
+    globalThis.fetch = original
+  }
+
+  assert.deepEqual(capturedBody, { enable: true, sessionID: "sess-abc", requestID: "req-sess" })
+})
+
 // ── Message-handler tests ────────────────────────────────────────────────────
 
 // These tests require the full message-handler module with all its dependencies mocked.
@@ -186,6 +229,10 @@ const mockBackend = {
     replyToPermissionCalls: [],
     async replyToPermission(requestId, reply) {
       this.replyToPermissionCalls.push({ requestId, reply })
+    },
+    allowEverythingCalls: [],
+    async allowEverything(opts) {
+      this.allowEverythingCalls.push({ ...opts })
     },
   },
   async sendMessage(args) {
@@ -209,6 +256,7 @@ function resetHandlerMocks() {
   mockBackend.supported = true
   mockRateLimit.result = { allowed: true }
   mockBackend.kilo.replyToPermissionCalls = []
+  mockBackend.kilo.allowEverythingCalls = []
 }
 
 await mock.module("../src/db.js", {
@@ -751,4 +799,149 @@ test("clearPendingPermission removes pending entry (simulates /abort or /detach)
   assert.ok(hasPendingPermission(chatKey), "pending entry must exist before clear")
   clearPendingPermission(chatKey)
   assert.ok(!hasPendingPermission(chatKey), "pending entry must be removed after clearPendingPermission")
+})
+
+// ── ae: callback tests (allow everything) ────────────────────────────────────
+
+test("ae:session callback calls allowEverything with sessionID+requestID and delivers resumed response", async () => {
+  resetHandlerMocks()
+  const chatKey = "8020"
+  const requestId = "req-ae-session"
+
+  setPendingPermission(chatKey, {
+    binding: { cli: "kilo", session_id: "sess-ae", agent: null, directory: "/tmp" },
+    agent: "default-agent",
+    backend: mockBackend,
+    requestId,
+    text: "🔐 Permission required\n\nTool: bash",
+    sessionId: "sess-ae",
+    directory: "/tmp",
+    messageCountBefore: 2,
+  })
+
+  const ctx = createCallbackCtx({ chatId: 8020, data: `ae:session:${requestId}` })
+  await callbackHandler(ctx)
+
+  assert.equal(mockBackend.kilo.allowEverythingCalls.length, 1, "allowEverything should be called once")
+  const call = mockBackend.kilo.allowEverythingCalls[0]
+  assert.equal(call.enable, true)
+  assert.equal(call.sessionID, "sess-ae", "session-scoped: must include sessionID")
+  assert.equal(call.requestID, requestId)
+
+  assert.ok(!hasPendingPermission(chatKey), "pending permission must be cleared")
+  assert.ok(
+    ctx.replies.some((r) => r.text === "response after permission"),
+    "expected resumed response delivered to user",
+  )
+})
+
+test("ae:global callback calls allowEverything without sessionID", async () => {
+  resetHandlerMocks()
+  const chatKey = "8021"
+  const requestId = "req-ae-global"
+
+  setPendingPermission(chatKey, {
+    binding: { cli: "kilo", session_id: "sess-ae2", agent: null, directory: "/tmp" },
+    agent: "default-agent",
+    backend: mockBackend,
+    requestId,
+    text: "🔐 Permission required",
+    sessionId: "sess-ae2",
+    directory: "/tmp",
+    messageCountBefore: 1,
+  })
+
+  const ctx = createCallbackCtx({ chatId: 8021, data: `ae:global:${requestId}` })
+  await callbackHandler(ctx)
+
+  const call = mockBackend.kilo.allowEverythingCalls[0]
+  assert.equal(call.enable, true)
+  assert.equal(call.sessionID, undefined, "global: must NOT include sessionID")
+  assert.equal(call.requestID, requestId)
+  assert.ok(!hasPendingPermission(chatKey), "pending permission must be cleared")
+})
+
+test("ae: callback with invalid scope is rejected without touching state", async () => {
+  resetHandlerMocks()
+  const chatKey = "8022"
+  const requestId = "req-ae-invalid"
+
+  setPendingPermission(chatKey, {
+    binding: { cli: "kilo", session_id: "sess-ae3", agent: null, directory: "/tmp" },
+    agent: "default-agent",
+    backend: mockBackend,
+    requestId,
+    text: "🔐 Permission required",
+    sessionId: "sess-ae3",
+    directory: "/tmp",
+    messageCountBefore: 1,
+  })
+
+  const ctx = createCallbackCtx({ chatId: 8022, data: `ae:everything:${requestId}` })
+  await callbackHandler(ctx)
+
+  assert.equal(mockBackend.kilo.allowEverythingCalls.length, 0, "allowEverything must not be called for invalid scope")
+  assert.ok(hasPendingPermission(chatKey), "pending permission must remain after rejected scope")
+  assert.ok(
+    ctx.callbackAnswers.some((a) => a?.show_alert === true),
+    "expected a show_alert for invalid scope",
+  )
+  clearPendingPermission(chatKey)
+})
+
+test("ae: callback with stale requestId is rejected", async () => {
+  resetHandlerMocks()
+  const chatKey = "8023"
+
+  setPendingPermission(chatKey, {
+    binding: { cli: "kilo", session_id: "sess-ae4", agent: null, directory: "/tmp" },
+    agent: "default-agent",
+    backend: mockBackend,
+    requestId: "req-current",
+    text: "🔐 Permission required",
+    sessionId: "sess-ae4",
+    directory: "/tmp",
+    messageCountBefore: 1,
+  })
+
+  const ctx = createCallbackCtx({ chatId: 8023, data: "ae:session:req-stale" })
+  await callbackHandler(ctx)
+
+  assert.equal(mockBackend.kilo.allowEverythingCalls.length, 0, "allowEverything must not be called for stale requestId")
+  assert.ok(hasPendingPermission(chatKey), "pending permission must remain")
+  clearPendingPermission(chatKey)
+})
+
+test("ae: callback is rejected when backend has no allowEverything (e.g. Claude permission)", async () => {
+  resetHandlerMocks()
+  const chatKey = "8024"
+  const requestId = "req-ae-noop"
+
+  // Backend without kilo.allowEverything (simulates a Claude permission being pending)
+  const claudeLikeBackend = {
+    name: "claude",
+    supported: true,
+    kilo: null,
+    replyPermission: () => {},
+  }
+
+  setPendingPermission(chatKey, {
+    binding: { cli: "claude", session_id: "sess-claude", agent: null, directory: "/tmp" },
+    agent: "default-agent",
+    backend: claudeLikeBackend,
+    requestId,
+    text: "🔐 Permission required",
+    sessionId: "sess-claude",
+    directory: "/tmp",
+    messageCountBefore: 1,
+  })
+
+  const ctx = createCallbackCtx({ chatId: 8024, data: `ae:session:${requestId}` })
+  await callbackHandler(ctx)
+
+  assert.ok(
+    ctx.callbackAnswers.some((a) => a?.show_alert === true),
+    "expected show_alert for unsupported backend",
+  )
+  clearPendingPermission(chatKey)
 })

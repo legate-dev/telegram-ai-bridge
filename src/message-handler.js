@@ -435,14 +435,34 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       const chatKey = String(ctx.chat.id)
       const firstColon = data.indexOf(":")
       const secondColon = data.indexOf(":", firstColon + 1)
-      const scope = data.slice(firstColon + 1, secondColon)   // "session" | "global"
-      const requestId = data.slice(secondColon + 1)
+      const scope = secondColon !== -1 ? data.slice(firstColon + 1, secondColon) : ""
+      const requestId = secondColon !== -1 ? data.slice(secondColon + 1) : ""
+
+      // Validate shape and scope before touching any state
+      if (secondColon === -1 || !["session", "global"].includes(scope) || !requestId) {
+        await ctx.answerCallbackQuery({ text: "Invalid action.", show_alert: true })
+        return
+      }
 
       const pending = pendingPermissions.get(chatKey)
       if (!pending || pending.requestId !== requestId) {
         await ctx.answerCallbackQuery({ text: "No pending permission or stale request.", show_alert: true })
         return
       }
+
+      // Capability check — ae: is Kilo-only; a forged callback while a Claude
+      // permission is pending would otherwise throw and confuse the user.
+      if (typeof pending.backend?.kilo?.allowEverything !== "function") {
+        await ctx.answerCallbackQuery({ text: "Unsupported action for this backend.", show_alert: true })
+        return
+      }
+
+      // Session-scoped allow-everything requires a known session ID
+      if (scope === "session" && !pending.sessionId) {
+        await ctx.answerCallbackQuery({ text: "No session ID available for session-scoped allow.", show_alert: true })
+        return
+      }
+
       if (pending.replying) {
         await ctx.answerCallbackQuery({ text: "Already processing…", show_alert: true })
         return
@@ -457,7 +477,15 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         if (scope === "session") opts.sessionID = pending.sessionId
         await pending.backend.kilo.allowEverything(opts)
 
-        // Kilo resolves the current request + drains all pending.
+        // Kilo drains its full pending queue server-side. Clear any stale
+        // Kilo permission entries from other chats so their keyboard buttons
+        // don't attempt to reply to already-drained requests.
+        for (const [key, entry] of pendingPermissions.entries()) {
+          if (key !== chatKey && entry.binding?.cli === "kilo") {
+            deletePendingPermission(key)
+          }
+        }
+
         // Lock inFlightChats before releasing the permission guard (same as perm: path).
         const canResume = pending.sessionId != null && pending.backend?.resumeTurn != null
         if (canResume) inFlightChats.add(chatKey)

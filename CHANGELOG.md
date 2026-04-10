@@ -13,6 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-10
+
+### Added
+
+- **Claude interactive permission prompts** (#34). The Claude backend now uses
+  `--permission-prompt-tool stdio` instead of `--dangerously-skip-permissions`.
+  When Claude wants to run a Bash command, edit a file, or invoke any tool
+  requiring approval, you get an inline keyboard with three choices: **Allow once**,
+  **Always allow**, and **Deny** — directly in Telegram. No more blind auto-approval
+  of every tool call. The paused turn resumes automatically after you respond;
+  no context is lost.
+
+  Set `BRIDGE_CLAUDE_DANGEROUS_SKIP_PERMISSIONS=false` in `.env` to opt in.
+  Default is `true` (previous behaviour — all tools auto-approved) so existing
+  deployments are unaffected.
+
+- **Claude progress events**. The new streaming backend emits `text`, `thinking`,
+  and `tool_use` events in real time. Text chunks are accumulated and sent as one
+  message when the turn completes, eliminating the previous 30–120 s silence
+  while Claude was working.
+
+### Fixed
+
+- **KILO_SERVE_URL security note** (#33). Added a warning in `.env.example`
+  that exposing `KILO_SERVE_URL` to an external host without TLS puts the Kilo
+  server unauthenticated on the network.
+
 ## [0.3.4] - 2026-04-09
 
 ### Fixed

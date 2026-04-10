@@ -457,10 +457,11 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         // CLI-name checks would break if a future backend reuses the same name.
         const isStreamingBackend = typeof pending.backend?.replyPermission === "function"
         if (isStreamingBackend) {
-          // AsyncGenerator path (Claude): write control_response to active stdin.
-          // The for-await loop in processTextMessage resumes automatically —
-          // no resumeTurn() needed, and inFlightChats stays held by that loop.
+          // AsyncGenerator path (Claude + future streaming backends): write
+          // control_response to active stdin so the for-await loop resumes.
+          // No resumeTurn() needed; inFlightChats stays held by that loop.
           // Map "once"/"always" → "allow" so the replyPermission contract is met.
+          // Gemini never yields permission events, so this branch is Claude-only in practice.
           const behavior = reply === "deny" ? "deny" : "allow"
           pending.backend.replyPermission(requestId, behavior)
           deletePendingPermission(chatKey)
@@ -768,7 +769,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       })
 
       if (maybeGenerator != null && typeof maybeGenerator[Symbol.asyncIterator] === "function") {
-        // ── AsyncGenerator path (Claude) ──────────────────────────────────────
+        // ── AsyncGenerator path (Claude, Gemini, future streaming backends) ────
         // Events stream in real-time. Permission events naturally pause the loop
         // (Claude blocks on stdin); replyPermission() in the perm: callback resumes it.
         const textParts = []

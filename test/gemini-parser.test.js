@@ -243,3 +243,69 @@ test("GeminiBackend ignores messages with role:user", async () => {
   assert.equal(textEvents.length, 1)
   assert.equal(textEvents[0].text, "response")
 })
+
+// ── R3: multiple non-delta messages joined correctly ──
+
+test("GeminiBackend joins multiple non-delta messages without separator at result flush", async () => {
+  // Two consecutive non-delta messages — join("") is intentional (cc-connect semantics).
+  // Each fragment is expected to carry natural word boundaries (trailing space if needed).
+  config.binGemini = makeFakeBin([
+    '{"type":"message","role":"assistant","content":"Hello ","delta":false}',
+    '{"type":"message","role":"assistant","content":"world!","delta":false}',
+    '{"type":"result","session_id":"sid-join","status":"ok","stats":{}}',
+  ])
+
+  const events = await collectEvents({ sessionId: null, directory: tmpdir(), text: "hi" })
+  const textEvents = events.filter((e) => e.type === "text")
+  assert.equal(textEvents.length, 1, "multiple non-delta messages must be flushed as one text event")
+  assert.equal(textEvents[0].text, "Hello world!", "fragments joined without extra separator")
+})
+
+// ── R4: session resume -r flag ──
+
+test("GeminiBackend passes -r flag when sessionId is a real (non-placeholder) ID", async () => {
+  // Script echoes whether it received -r in argv, then exits with a result event
+  const script = join(tmpdir(), `fake-gemini-args-${Date.now()}.sh`)
+  writeFileSync(script, [
+    "#!/bin/sh",
+    "for arg in \"$@\"; do",
+    "  if [ \"$arg\" = \"real-session-abc\" ]; then",
+    // Emit a marker text so the test can verify the flag reached the process
+    "    printf '%s\\n' '{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"resumed\",\"delta\":true}'",
+    "    printf '%s\\n' '{\"type\":\"result\",\"session_id\":\"real-session-abc\",\"status\":\"ok\",\"stats\":{}}'",
+    "    exit 0",
+    "  fi",
+    "done",
+    // -r flag not present
+    "printf '%s\\n' '{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"new\",\"delta\":true}'",
+    "printf '%s\\n' '{\"type\":\"result\",\"session_id\":\"new-sess\",\"status\":\"ok\",\"stats\":{}}'",
+  ].join("\n"))
+  chmodSync(script, 0o755)
+  config.binGemini = script
+
+  const events = await collectEvents({ sessionId: "real-session-abc", directory: tmpdir(), text: "hi" })
+  const textEvent = events.find((e) => e.type === "text")
+  assert.equal(textEvent?.text, "resumed", "-r flag must be passed for non-placeholder sessionId")
+})
+
+test("GeminiBackend omits -r flag for placeholder sessionId (gemini-<timestamp>)", async () => {
+  const script = join(tmpdir(), `fake-gemini-args-noR-${Date.now()}.sh`)
+  writeFileSync(script, [
+    "#!/bin/sh",
+    "for arg in \"$@\"; do",
+    "  if [ \"$arg\" = \"gemini-1234567890\" ]; then",
+    "    printf '%s\\n' '{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"got-placeholder\",\"delta\":true}'",
+    "    printf '%s\\n' '{\"type\":\"result\",\"session_id\":\"x\",\"status\":\"ok\",\"stats\":{}}'",
+    "    exit 0",
+    "  fi",
+    "done",
+    "printf '%s\\n' '{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"no-placeholder\",\"delta\":true}'",
+    "printf '%s\\n' '{\"type\":\"result\",\"session_id\":\"x\",\"status\":\"ok\",\"stats\":{}}'",
+  ].join("\n"))
+  chmodSync(script, 0o755)
+  config.binGemini = script
+
+  const events = await collectEvents({ sessionId: "gemini-1234567890", directory: tmpdir(), text: "hi" })
+  const textEvent = events.find((e) => e.type === "text")
+  assert.equal(textEvent?.text, "no-placeholder", "placeholder sessionId must not be passed as -r")
+})

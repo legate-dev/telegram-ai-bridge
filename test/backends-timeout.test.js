@@ -17,8 +17,8 @@ const timeoutError = Object.assign(new Error("Command timed out"), {
 
 const codexPartialStdout = '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n'
 const copilotPartialStdout = '{"type":"assistant.message","data":{"content":"partial"}}\n'
-const geminiPartialStdout = '{"text":"partial","session_id":"sid-1"}\n'
 const claudePartialStdout = '{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}\n'
+// GeminiBackend now uses spawn + stream-json — timeout tests moved to gemini-parser.test.js.
 
 // ── Mock execFile factory ──
 

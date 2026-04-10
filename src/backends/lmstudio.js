@@ -13,10 +13,11 @@ import { log } from "../log.js"
 // request so the model has full context.
 //
 // Config:
-//   LMSTUDIO_BASE_URL   — LM Studio server URL (default http://127.0.0.1:1234)
-//   LMSTUDIO_MODEL      — model identifier to request (default: auto-detect first loaded)
-//   LMSTUDIO_TIMEOUT_MS — request timeout in ms (default 120000)
-//   LMSTUDIO_MAX_TOKENS — max tokens per response (default 2048)
+//   LMSTUDIO_BASE_URL          — LM Studio server URL (default http://127.0.0.1:1234)
+//   LMSTUDIO_MODEL             — model identifier to request (default: auto-detect first loaded)
+//   LMSTUDIO_TIMEOUT_MS        — request timeout in ms (default 120000)
+//   LMSTUDIO_MAX_TOKENS        — max tokens per response (default 2048)
+//   LMSTUDIO_DETECT_TIMEOUT_MS — timeout for auto-detect /v1/models probe (default 3000)
 
 /**
  * Fetch the first non-embedding model from LM Studio's /v1/models endpoint.
@@ -27,7 +28,7 @@ import { log } from "../log.js"
 async function autoDetectModel(baseUrl) {
   try {
     const res = await fetch(`${baseUrl}/v1/models`, {
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(config.lmstudioDetectTimeoutMs),
     })
     if (!res.ok) return ""
     const { data } = await res.json()
@@ -123,6 +124,11 @@ export class LmStudioBackend {
       return
     }
 
+    if (!response.body) {
+      yield { type: "error", message: "LM Studio response has no body" }
+      return
+    }
+
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buf = ""
@@ -131,7 +137,7 @@ export class LmStudioBackend {
     let outputTokens = 0
 
     try {
-      outer: while (true) {
+      while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
@@ -144,6 +150,10 @@ export class LmStudioBackend {
           const payload = line.slice(6).trim()
 
           if (payload === "[DONE]") {
+            if (!fullResponse) {
+              yield { type: "error", message: "LM Studio returned no text content" }
+              return
+            }
             appendLmStudioMessage(sessionId, "user", text)
             appendLmStudioMessage(sessionId, "assistant", fullResponse)
             yield { type: "result", sessionId, inputTokens, outputTokens }

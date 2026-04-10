@@ -129,6 +129,7 @@ export const config = {
   // ── LM Studio (local OpenAI-compatible server) ──
   lmstudioBaseUrl: value("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234").replace(/\/$/, ""),
   lmstudioModel: value("LMSTUDIO_MODEL", ""),
-  lmstudioTimeoutMs: parseInt(value("LMSTUDIO_TIMEOUT_MS", "120000"), 10),
-  lmstudioMaxTokens: parseInt(value("LMSTUDIO_MAX_TOKENS", "2048"), 10),
+  lmstudioTimeoutMs: parseInt(value("LMSTUDIO_TIMEOUT_MS", "120000"), 10) || 120000,
+  lmstudioMaxTokens: parseInt(value("LMSTUDIO_MAX_TOKENS", "2048"), 10) || 2048,
+  lmstudioDetectTimeoutMs: parseInt(value("LMSTUDIO_DETECT_TIMEOUT_MS", "3000"), 10) || 3000,
 }

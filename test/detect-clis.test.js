@@ -72,7 +72,7 @@ function resetMocks() {
 
 // ── Tests ──
 
-test("non-binary backends default to supported=true; binary backends require installation", () => {
+test("kilo and lmstudio (HTTP-based) are always supported; binary backends require installation", () => {
   resetMocks()
   // Run detection with no sessions and no binaries
   detectAvailableClis()

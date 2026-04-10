@@ -1,4 +1,4 @@
-import { mock, test } from "node:test"
+import { mock, test, after } from "node:test"
 import assert from "node:assert/strict"
 
 process.env.TELEGRAM_BOT_TOKEN ??= "123456:TESTTOKEN"
@@ -36,12 +36,13 @@ await mock.module("../src/config.js", {
   },
 })
 
-// Intercept global fetch
+// Intercept global fetch — restored after all tests via after() hook
 const originalFetch = global.fetch
 global.fetch = (...args) => {
   if (mockFetchImpl) return mockFetchImpl(...args)
   return originalFetch(...args)
 }
+after(() => { global.fetch = originalFetch })
 
 const { LmStudioBackend } = await import("../src/backends.js")
 
@@ -179,6 +180,39 @@ test("LmStudioBackend yields error on non-200 response", async () => {
   assert.equal(events.length, 1)
   assert.equal(events[0].type, "error")
   assert.ok(events[0].message.includes("No models loaded"))
+})
+
+test("LmStudioBackend yields error on null response body", async () => {
+  resetMocks()
+  mockFetchImpl = () => ({ ok: true, status: 200, body: null })
+
+  const backend = new LmStudioBackend()
+  const events = []
+  for await (const ev of backend.sendMessage({ sessionId: "s10", directory: "/tmp", text: "hi" })) {
+    events.push(ev)
+  }
+
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, "error")
+  assert.ok(events[0].message.includes("no body"))
+})
+
+test("LmStudioBackend yields error when [DONE] arrives with no content", async () => {
+  resetMocks()
+  mockFetchImpl = () => makeResponse([
+    `data: {"choices":[{"delta":{"reasoning_content":"thinking only"}}]}`,
+    `data: [DONE]`,
+  ])
+
+  const backend = new LmStudioBackend()
+  const events = []
+  for await (const ev of backend.sendMessage({ sessionId: "s11", directory: "/tmp", text: "hi" })) {
+    events.push(ev)
+  }
+
+  assert.equal(events.at(-1).type, "error")
+  assert.ok(events.at(-1).message.includes("no text content"))
+  assert.equal(appendedMessages.length, 0, "no messages should be persisted on empty [DONE]")
 })
 
 test("LmStudioBackend yields error when fetch throws (unreachable)", async () => {

@@ -88,6 +88,38 @@ export function createMockBackend({ supported = true } = {}) {
 }
 
 /**
+ * Creates an AsyncGenerator mock backend that yields typed events, mirroring
+ * the Claude streaming backend interface.
+ *
+ * Event shapes (must match what claude.js actually yields):
+ *   { type: "text",       text: string }
+ *   { type: "result",     sessionId: string }
+ *   { type: "permission", requestId: string, toolName: string, toolInput: string, toolInputRaw: object }
+ *   { type: "question",   requestId: string, questions: Array }
+ *   { type: "error",      message: string }
+ *
+ * @param {Array<object>} events - Sequence of events to yield.
+ */
+export function createMockGeneratorBackend(events) {
+  return {
+    name: "claude",
+    supported: true,
+    /** Tracks all calls to replyPermission — inspectable in tests. */
+    replyPermissionCalls: [],
+    replyPermission(requestId, behavior) {
+      this.replyPermissionCalls.push({ requestId, behavior })
+      return Promise.resolve()
+    },
+    async *sendMessage() {
+      for (const event of events) yield event
+    },
+    createSession: async () => ({ id: "claude-mock-1" }),
+    abortSession: async () => {},
+    getSessionStatus: async () => null,
+  }
+}
+
+/**
  * Creates a minimal mock Grammy bot that captures `on()` handlers.
  * Access captured handlers via `bot.handlers["event:name"]`.
  */

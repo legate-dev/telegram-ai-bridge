@@ -10,18 +10,48 @@ Every live-chat backend must implement the following contract:
 
 ```javascript
 sendMessage({ sessionId, directory, text, agent, model })
+  // Promise path (Kilo, Codex, Copilot, Gemini)
   => { text: string, threadId?: string }
   |  { error: string }
   |  { question: { questions: Array, precedingText?: string } }
   |  { permission: { id: string, sessionID: string, permission: string, patterns: string[], metadata: object, always: string[] }, messageCountBefore: number }
+  // AsyncGenerator path (Claude)
+  |  AsyncGenerator<StreamEvent>
 ```
 
-### Behavioral rules
+**StreamEvent shapes (AsyncGenerator path):**
+
+```javascript
+{ type: "text",       text: string }           // text output chunk — join without separator
+{ type: "thinking",   text: string }           // extended thinking block
+{ type: "tool_use",   toolName: string, toolInput: string }
+{ type: "permission", requestId: string, toolName: string, toolInput: string, toolInputRaw: object }
+{ type: "question",   requestId: string, questions: Array }
+{ type: "result",     sessionId: string, inputTokens: number, outputTokens: number }
+{ type: "error",      message: string }        // terminal; generator ends after this
+```
+
+AsyncGenerator backends must also implement:
+```javascript
+replyPermission(requestId: string, behavior: "allow" | "deny"): void
+```
+Called by the `perm:` callback to write a `control_response` to Claude's stdin, unblocking the suspended generator.
+
+### Behavioral rules (Promise path)
 
 - `sendMessage()` should return `{ error }` for expected model/runtime failures
 - `sendMessage()` may throw for transport or integration failures
 - `sendMessage()` may return `{ question }` when the AI calls `mcp_question` mid-turn (Kilo only). The caller should surface the question to the user and re-submit their answer as a new turn. The conversation history already contains the question, so the AI can resume naturally.
 - `sendMessage()` may return `{ permission }` when Kilo's permission engine has a pending request (Kilo only). The caller should surface the permission prompt to the user via inline keyboard (Allow once / Always allow / Deny). **The original turn is NOT aborted** — Kilo holds it server-side and resumes automatically once the bridge POSTs a reply to `POST /permission/:id/reply`. The caller must not start a new turn.
+
+### Behavioral rules (AsyncGenerator path)
+
+- Detected via `typeof sendMessage(...)[Symbol.asyncIterator] === "function"` — no CLI name check
+- `text` events are accumulated and sent as one message when `result` fires
+- `permission` events surface an inline keyboard; the generator naturally suspends because Claude blocks on stdin awaiting the `control_response`. When the user taps Allow/Deny, `replyPermission()` writes to stdin and the generator resumes
+- `question` events are auto-denied in Phase 1.1 (full AskUserQuestion round-trip deferred to Phase 1.2)
+- `error` events clear any pending permission state and surface an error message
+- `inFlightChats` is held for the full duration of the generator loop; the `perm:` callback must not touch it
 - `threadId` is optional and updates persisted chat binding when present
 - `directory` must be absolute by the time a backend receives it
 - `agent` is advisory unless the backend explicitly applies it

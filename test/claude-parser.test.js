@@ -51,7 +51,7 @@ test("ClaudeBackend yields text and result events from stream-json output", asyn
 
   const textEvents = events.filter((e) => e.type === "text")
   assert.equal(textEvents.length, 1)
-  assert.equal(textEvents[0].content, "Hello from claude")
+  assert.equal(textEvents[0].text, "Hello from claude")
 
   const resultEvent = events.find((e) => e.type === "result")
   assert.ok(resultEvent, "should have a result event")
@@ -70,7 +70,7 @@ test("ClaudeBackend yields one text event per text block in an assistant message
 
   const events = await collectEvents({ sessionId: null, directory: tmpdir(), text: "hi" })
 
-  const textParts = events.filter((e) => e.type === "text").map((e) => e.content)
+  const textParts = events.filter((e) => e.type === "text").map((e) => e.text)
   assert.deepEqual(textParts, ["Part 1", "Part 2"])
 })
 
@@ -303,5 +303,5 @@ test("ClaudeBackend skips non-JSON lines without throwing", async () => {
   const events = await collectEvents({ sessionId: null, directory: tmpdir(), text: "hi" })
   const textEvents = events.filter((e) => e.type === "text")
   assert.equal(textEvents.length, 1)
-  assert.equal(textEvents[0].content, "still works")
+  assert.equal(textEvents[0].text, "still works")
 })

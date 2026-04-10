@@ -4,6 +4,7 @@ import {
   createMockCtx,
   createCallbackCtx,
   createMockBackend,
+  createMockGeneratorBackend,
   makeMockBot,
 } from "./helpers/message-handler-mocks.js"
 
@@ -27,6 +28,11 @@ const mockRateLimit = {
 }
 
 const mockBackend = createMockBackend()
+
+// Per-test generator backend override. When non-null, getBackend() returns this
+// instead of mockBackend so tests can exercise the AsyncGenerator consumer path.
+// Reset to null in resetMocks().
+let activeGeneratorBackend = null
 
 const mockCreateNewSessionCalls = []
 
@@ -88,7 +94,7 @@ await mock.module("../src/rate-limit.js", {
 
 await mock.module("../src/backends.js", {
   namedExports: {
-    getBackend: () => mockBackend,
+    getBackend: () => activeGeneratorBackend ?? mockBackend,
     supportedClis: () => mockSupportedClis.result,
   },
 })
@@ -147,7 +153,12 @@ await mock.module("../src/telegram-utils.js", {
 
 // ── Import module under test ─────────────────────────────────────────────────
 
-const { setupHandlers } = await import("../src/message-handler.js")
+const {
+  setupHandlers,
+  getPendingPermission,
+  hasPendingPermission,
+  clearPendingPermission,
+} = await import("../src/message-handler.js")
 
 // ── Wire up handlers once ────────────────────────────────────────────────────
 
@@ -178,6 +189,7 @@ function resetMocks() {
   mockPathValidator.result = { ok: true }
   mockSupportedClis.result = ["claude", "kilo"]
   mockLastTurn.result = null
+  activeGeneratorBackend = null
 }
 
 // ── Tests: text message routing ───────────────────────────────────────────────
@@ -875,5 +887,147 @@ test("callback setmodel: on unsupported CLI answers with not-supported alert", a
   assert.ok(
     ctx.callbackAnswers.some((a) => a?.show_alert === true),
     "expected a show_alert for unsupported CLI",
+  )
+})
+
+// ── AsyncGenerator consumer path (Claude streaming) ───────────────────────────
+// Chat IDs 3001–3006 are reserved for this section.
+// Events use the real claude.js format: { type:"text", text } / { type:"permission", requestId, toolName, toolInput, toolInputRaw }.
+
+test("AsyncGenerator: text + result events → replyChunks with accumulated text", async () => {
+  resetMocks()
+  activeGeneratorBackend = createMockGeneratorBackend([
+    { type: "text", text: "Hello, " },
+    { type: "text", text: "world!" },
+    { type: "result", sessionId: "sess-gen-1", inputTokens: 5, outputTokens: 3 },
+  ])
+  mockDb.binding = { cli: "claude", session_id: "sess-gen-1", agent: null, directory: "/tmp" }
+  const ctx = createMockCtx({ chatId: 3001, text: "hi" })
+  await textHandler(ctx)
+
+  const reply = ctx.replies.find((r) => r.text && r.text.includes("Hello"))
+  assert.ok(reply, "expected a reply containing the accumulated text")
+  assert.ok(reply.text.includes("world"), "expected both text chunks joined in the reply")
+  assert.equal(mockBackend.sendMessageCalls.length, 0, "Promise-path backend must not be called")
+})
+
+test("AsyncGenerator: result.sessionId differs from binding → setChatBinding (compare-and-set)", async () => {
+  resetMocks()
+  activeGeneratorBackend = createMockGeneratorBackend([
+    { type: "text", text: "Response" },
+    { type: "result", sessionId: "new-session-id", inputTokens: 0, outputTokens: 0 },
+  ])
+  mockDb.binding = { cli: "claude", session_id: "old-session-id", agent: null, directory: "/tmp" }
+  const ctx = createMockCtx({ chatId: 3002, text: "hi" })
+  await textHandler(ctx)
+
+  assert.ok(
+    mockDb.setChatBindingCalls.some((c) => c.binding.session_id === "new-session-id"),
+    "expected setChatBinding to be called with the new session ID from result event",
+  )
+})
+
+test("AsyncGenerator: permission event → surfacePermission called; pendingPermission stores backend", async () => {
+  resetMocks()
+  // Use real claude.js event shape: requestId / toolName / toolInput / toolInputRaw
+  activeGeneratorBackend = createMockGeneratorBackend([
+    { type: "permission", requestId: "req-1", toolName: "Bash", toolInput: "echo hi", toolInputRaw: { command: "echo hi" } },
+  ])
+  mockDb.binding = { cli: "claude", session_id: "sess-perm", agent: null, directory: "/tmp" }
+  const ctx = createMockCtx({ chatId: 3003, text: "run thing" })
+  await textHandler(ctx)
+
+  assert.ok(
+    ctx.replies.some((r) => r.text && r.text.includes("Permission required")),
+    "expected 'Permission required' reply from surfacePermission",
+  )
+  const pending = getPendingPermission(String(3003))
+  assert.ok(pending, "expected pending permission to be set")
+  assert.equal(pending.backend, activeGeneratorBackend, "expected generator backend stored in pending")
+  assert.equal(pending.requestId, "req-1", "expected requestId to match")
+
+  clearPendingPermission(String(3003))
+})
+
+test("AsyncGenerator: perm: callback → backend.replyPermission called; inFlightChats released; pending cleared", async () => {
+  resetMocks()
+  activeGeneratorBackend = createMockGeneratorBackend([
+    { type: "permission", requestId: "req-cb-1", toolName: "Bash", toolInput: "rm /tmp/x", toolInputRaw: {} },
+  ])
+  mockDb.binding = { cli: "claude", session_id: "sess-perm-cb", agent: null, directory: "/tmp" }
+
+  // Step 1: surface the permission
+  await textHandler(createMockCtx({ chatId: 3004, text: "do something" }))
+  assert.ok(getPendingPermission(String(3004)), "setup: pending permission must be set")
+
+  // Step 2: user taps "Allow once"
+  const callbackCtx = createCallbackCtx({ chatId: 3004, data: "perm:once:req-cb-1" })
+  await callbackHandler(callbackCtx)
+
+  // replyPermission must be called with behavior "allow" (not "once")
+  assert.ok(
+    activeGeneratorBackend.replyPermissionCalls.some(
+      (c) => c.requestId === "req-cb-1" && c.behavior === "allow",
+    ),
+    "expected replyPermission('req-cb-1', 'allow') — 'once' must be mapped to 'allow'",
+  )
+  // Pending must be cleared
+  assert.equal(hasPendingPermission(String(3004)), false, "expected pending permission cleared after callback")
+
+  // A follow-up message must go through (inFlightChats not held by callback)
+  activeGeneratorBackend = createMockGeneratorBackend([
+    { type: "text", text: "follow-up" },
+    { type: "result", sessionId: "sess-perm-cb", inputTokens: 0, outputTokens: 0 },
+  ])
+  mockDb.binding = { cli: "claude", session_id: "sess-perm-cb", agent: null, directory: "/tmp" }
+  const followup = createMockCtx({ chatId: 3004, text: "next" })
+  await textHandler(followup)
+  assert.ok(
+    followup.replies.some((r) => r.text && r.text.includes("follow-up")),
+    "follow-up message must reach backend — inFlightChats must not be held after Claude perm: callback",
+  )
+})
+
+test("AsyncGenerator: question event → auto-deny called; loop continues; text delivered", async () => {
+  resetMocks()
+  activeGeneratorBackend = createMockGeneratorBackend([
+    { type: "question", requestId: "q-auto-1", questions: [{ question: "Which approach?", options: [] }] },
+    { type: "text", text: "Response after deny" },
+    { type: "result", sessionId: "sess-q", inputTokens: 0, outputTokens: 0 },
+  ])
+  mockDb.binding = { cli: "claude", session_id: "sess-q", agent: null, directory: "/tmp" }
+  const ctx = createMockCtx({ chatId: 3005, text: "do thing" })
+  await textHandler(ctx)
+
+  assert.ok(
+    activeGeneratorBackend.replyPermissionCalls.some(
+      (c) => c.requestId === "q-auto-1" && c.behavior === "deny",
+    ),
+    "expected auto-deny: replyPermission('q-auto-1', 'deny')",
+  )
+  assert.ok(
+    ctx.replies.some((r) => r.text && r.text.includes("Response after deny")),
+    "expected text delivered after auto-deny",
+  )
+})
+
+test("AsyncGenerator: error event → error message sent; deletePendingPermission called", async () => {
+  resetMocks()
+  activeGeneratorBackend = createMockGeneratorBackend([
+    { type: "permission", requestId: "req-err", toolName: "Bash", toolInput: "rm -rf /", toolInputRaw: {} },
+    { type: "error", message: "something went wrong" },
+  ])
+  mockDb.binding = { cli: "claude", session_id: "sess-error", agent: null, directory: "/tmp" }
+  const ctx = createMockCtx({ chatId: 3006, text: "run dangerous" })
+  await textHandler(ctx)
+
+  assert.ok(
+    ctx.replies.some((r) => r.text && r.text.includes("something went wrong")),
+    "expected error message in reply",
+  )
+  assert.equal(
+    hasPendingPermission(String(3006)),
+    false,
+    "expected pending permission cleared after error event",
   )
 })

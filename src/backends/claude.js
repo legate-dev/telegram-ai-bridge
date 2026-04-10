@@ -193,7 +193,7 @@ export class ClaudeBackend {
           if (!Array.isArray(content)) continue
           for (const block of content) {
             if (block?.type === "text" && block.text) {
-              yield { type: "text", content: block.text }
+              yield { type: "text", text: block.text }
             } else if (block?.type === "thinking" && block.thinking) {
               yield { type: "thinking", content: block.thinking }
             } else if (block?.type === "tool_use" && block.name !== "AskUserQuestion") {

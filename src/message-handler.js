@@ -452,10 +452,15 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       await ctx.answerCallbackQuery({ text: label })
 
       try {
-        if (pending.binding.cli === "claude") {
-          // Claude: write control_response directly to the active process stdin.
+        // Capability-based routing: streaming backends expose replyPermission()
+        // and own the turn lifecycle via their still-running for-await loop.
+        // CLI-name checks would break if a future backend reuses the same name.
+        const isStreamingBackend = typeof pending.backend?.replyPermission === "function"
+        if (isStreamingBackend) {
+          // AsyncGenerator path (Claude): write control_response to active stdin.
           // The for-await loop in processTextMessage resumes automatically —
           // no resumeTurn() needed, and inFlightChats stays held by that loop.
+          // Map "once"/"always" → "allow" so the replyPermission contract is met.
           const behavior = reply === "deny" ? "deny" : "allow"
           pending.backend.replyPermission(requestId, behavior)
           deletePendingPermission(chatKey)
@@ -466,7 +471,6 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
             chat_id: chatKey,
             request_id: requestId,
             reply,
-            cli: "claude",
             persist: true,
           })
         } else {
@@ -772,12 +776,12 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
 
         for await (const event of maybeGenerator) {
           if (event.type === "text") {
-            textParts.push(event.content)
+            textParts.push(event.text)
           } else if (event.type === "thinking") {
             log.debug("telegram.message", "backend.send.thinking", {
               cli: binding.cli,
               session_id: binding.session_id,
-              length: event.content.length,
+              length: event.text?.length ?? 0,
             })
           } else if (event.type === "tool_use") {
             log.debug("telegram.message", "backend.send.tool_use", {

@@ -756,13 +756,13 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
             } else if (event.type === "result") {
               if (event.sessionId) newSessionId = event.sessionId
             } else if (event.type === "permission") {
+              seenPermission = true
               await surfacePermission(
                 ctx, event, chatKey, binding, agent, backend,
                 // messageCountBefore is used by the Kilo resumeTurn path; the
                 // Claude AsyncGenerator path does not use it, so -1 is a sentinel.
                 binding.session_id, binding.directory, -1,
               )
-              seenPermission = true
             } else if (event.type === "question") {
               // AskUserQuestion events are auto-denied in the streaming path so
               // the generator can continue without user interaction.

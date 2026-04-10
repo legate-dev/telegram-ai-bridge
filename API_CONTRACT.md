@@ -203,6 +203,14 @@ Common optional variables:
 - `LOG_DB_PATH`
 - `LOG_RETENTION_DAYS`
 
+LM Studio backend (optional — only used when LM Studio is running locally):
+
+- `LMSTUDIO_BASE_URL` — LM Studio server URL (default: `http://127.0.0.1:1234`)
+- `LMSTUDIO_MODEL` — model identifier to request (e.g. `qwen3-0.6b`); if blank, the bridge auto-detects the first non-embedding model currently loaded in LM Studio
+- `LMSTUDIO_TIMEOUT_MS` — request timeout in ms (default: `120000`)
+- `LMSTUDIO_MAX_TOKENS` — maximum tokens per response (default: `2048`); thinking models (Qwen3, DeepSeek-R1) consume reasoning tokens against this limit
+- `LMSTUDIO_DETECT_TIMEOUT_MS` — timeout for the `/v1/models` auto-detect probe used when `LMSTUDIO_MODEL` is blank (default: `3000`); increase on slow hosts or cold-start models
+
 ## Non-contractual behavior
 
 These may evolve without breaking the bridge contract:

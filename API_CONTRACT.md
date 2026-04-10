@@ -31,11 +31,11 @@ sendMessage({ sessionId, directory, text, agent, model })
 { type: "error",      message: string }        // terminal; generator ends after this
 ```
 
-AsyncGenerator backends must also implement:
+Backends that can yield `permission` events must also implement:
 ```javascript
 replyPermission(requestId: string, behavior: "allow" | "deny"): void
 ```
-Called by the `perm:` callback to write a `control_response` to Claude's stdin, unblocking the suspended generator.
+Called by the `perm:` callback to write a `control_response` to the backend's stdin, unblocking the suspended generator. Gemini never yields `permission` events; its `replyPermission()` is a documented no-op.
 
 ### Behavioral rules (Promise path)
 
@@ -165,7 +165,6 @@ Model selection is supported for Claude Code and Codex backends only.
 
 - warnings and errors
 - Gemini streaming: `exec.timeout`, `exec.no_result`, `stream.error_event` (all persisted)
-- Gemini raw-stdout parser fallback
 - session bind/create/detach/abort/cleanup events
 - stuck-session diagnostics
 - backend exception paths

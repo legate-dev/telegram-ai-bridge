@@ -263,6 +263,13 @@ export class GeminiBackend {
     }
   }
 
+  /**
+   * No-op — Gemini CLI has no stdin permission protocol.
+   * Implemented for AsyncGenerator backend interface parity with Claude.
+   * Gemini never yields `permission` events so this is never called in practice.
+   */
+  replyPermission() {}
+
   async createSession({ title, directory }) {
     return { id: `gemini-${Date.now()}`, title, directory }
   }

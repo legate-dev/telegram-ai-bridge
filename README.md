@@ -4,7 +4,8 @@ Run your local AI coding CLI from Telegram on your phone. The bridge forwards me
 
 Same sessions, same config, same MCP servers. Nothing to rebuild.
 
-> **LM Studio** runs 100% local — no cloud, no API keys, no data leaves your machine.
+> **LM Studio** runs on your own hardware — no cloud, no API keys required.
+> When `LMSTUDIO_BASE_URL` points to localhost (the default), no data leaves your machine.
 > Optional side effect: turns your MacBook into a space heater.
 
 <p align="center">
@@ -31,7 +32,7 @@ MIT, gift.
 | Single-user, self-hosted, trusted-machine | A multi-tenant platform |
 | Provider-agnostic — works with any supported CLI | Locked to one provider |
 | Stateless — all intelligence lives in the CLI backends | Another LLM wrapper |
-| Privacy-first option via LM Studio — 100% local, zero cloud, BYOK | Requiring an API key or subscription |
+| Privacy-first option via LM Studio — zero cloud, runs on your own hardware | Requiring an API key or subscription |
 
 ## Why it exists
 
@@ -95,7 +96,7 @@ The bridge auto-detects which CLIs you have installed and only shows those in th
 | **Copilot** | `copilot -p --output-format json` | ✅ Full support |
 | **Gemini** | `gemini --output-format stream-json` (AsyncGenerator; `-y` auto-approve) | ✅ Full support |
 | **Kilo** | HTTP API (`kilo serve`, bridge-managed) | ✅ Full support |
-| **LM Studio** | `POST /v1/chat/completions` stream (AsyncGenerator; local-only, BYOK) | ✅ Full support |
+| **LM Studio** | `POST /v1/chat/completions` stream (AsyncGenerator; local-only, no API keys) | ✅ Full support |
 | Qwen | Session scanning only | Browse & resume |
 
 The bridge parses each CLI's JSON/JSONL output. When a CLI ships a breaking format change, the parser may need updating — see [CONTRIBUTING.md](CONTRIBUTING.md#reporting-parser-breakage) for how to report and fix these.

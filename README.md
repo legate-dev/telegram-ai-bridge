@@ -1,8 +1,12 @@
 # Telegram Bridge
 
-Run your local AI coding CLI from Telegram on your phone. The bridge forwards messages to [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [GitHub Copilot](https://github.com/features/copilot), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Kilo](https://kilocode.ai) running on your machine and sends replies back.
+Run your local AI coding CLI from Telegram on your phone. The bridge forwards messages to [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [GitHub Copilot](https://github.com/features/copilot), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Kilo](https://kilocode.ai), or [LM Studio](https://lmstudio.ai) running on your machine and sends replies back.
 
 Same sessions, same config, same MCP servers. Nothing to rebuild.
+
+> **LM Studio** runs on your own hardware — no cloud, no API keys required.
+> When `LMSTUDIO_BASE_URL` points to localhost (the default), no data leaves your machine.
+> Optional side effect: turns your MacBook into a space heater.
 
 <p align="center">
   <img src="docs/screenshots/hero-inline-keyboard.png" width="340" alt="AI asks a question — you tap an answer. mcp_question rendered as a native Telegram inline keyboard"/>
@@ -28,6 +32,7 @@ MIT, gift.
 | Single-user, self-hosted, trusted-machine | A multi-tenant platform |
 | Provider-agnostic — works with any supported CLI | Locked to one provider |
 | Stateless — all intelligence lives in the CLI backends | Another LLM wrapper |
+| Privacy-first option via LM Studio — zero cloud, runs on your own hardware | Requiring an API key or subscription |
 
 ## Why it exists
 
@@ -91,6 +96,7 @@ The bridge auto-detects which CLIs you have installed and only shows those in th
 | **Copilot** | `copilot -p --output-format json` | ✅ Full support |
 | **Gemini** | `gemini --output-format stream-json` (AsyncGenerator; `-y` auto-approve) | ✅ Full support |
 | **Kilo** | HTTP API (`kilo serve`, bridge-managed) | ✅ Full support |
+| **LM Studio** | `POST /v1/chat/completions` stream (AsyncGenerator; local-only, no API keys) | ✅ Full support |
 | Qwen | Session scanning only | Browse & resume |
 
 The bridge parses each CLI's JSON/JSONL output. When a CLI ships a breaking format change, the parser may need updating — see [CONTRIBUTING.md](CONTRIBUTING.md#reporting-parser-breakage) for how to report and fix these.

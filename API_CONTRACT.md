@@ -10,12 +10,12 @@ Every live-chat backend must implement the following contract:
 
 ```javascript
 sendMessage({ sessionId, directory, text, agent, model })
-  // Promise path (Kilo, Codex, Copilot, Gemini)
+  // Promise path (Kilo, Codex, Copilot)
   => { text: string, threadId?: string }
   |  { error: string }
   |  { question: { questions: Array, precedingText?: string } }
   |  { permission: { id: string, sessionID: string, permission: string, patterns: string[], metadata: object, always: string[] }, messageCountBefore: number }
-  // AsyncGenerator path (Claude)
+  // AsyncGenerator path (Claude, Gemini)
   |  AsyncGenerator<StreamEvent>
 ```
 
@@ -31,11 +31,11 @@ sendMessage({ sessionId, directory, text, agent, model })
 { type: "error",      message: string }        // terminal; generator ends after this
 ```
 
-AsyncGenerator backends must also implement:
+Backends that can yield `permission` events must also implement:
 ```javascript
 replyPermission(requestId: string, behavior: "allow" | "deny"): void
 ```
-Called by the `perm:` callback to write a `control_response` to Claude's stdin, unblocking the suspended generator.
+Called by the `perm:` callback to write a `control_response` to the backend's stdin, unblocking the suspended generator. Gemini never yields `permission` events; its `replyPermission()` is a documented no-op.
 
 ### Behavioral rules (Promise path)
 
@@ -154,21 +154,6 @@ Model selection is supported for Claude Code and Codex backends only.
 - Retryable HTTP statuses: `429`, `502`, `503`, `504`
 - Retryable network classes: timeout, abort, `ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`, `UND_ERR_SOCKET`
 
-## Gemini parsing contract
-
-The bridge treats Gemini output in this order:
-
-1. Parse full `stdout` as a single JSON object
-2. If that fails, attempt line-wise parsing for JSONL-like output
-3. If structured extraction still fails, fall back to raw text and emit a persisted warning event
-
-Recognized response fields:
-
-- `response`
-- `content`
-- `text`
-- `session_id`
-
 ## Logging contract
 
 ### Outputs
@@ -179,7 +164,7 @@ Recognized response fields:
 ### Persisted event classes
 
 - warnings and errors
-- Gemini raw-stdout parser fallback
+- Gemini streaming: `exec.timeout`, `exec.no_result`, `stream.error_event` (all persisted)
 - session bind/create/detach/abort/cleanup events
 - stuck-session diagnostics
 - backend exception paths

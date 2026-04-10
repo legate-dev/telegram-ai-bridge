@@ -73,13 +73,8 @@ test("CopilotBackend passes stdio: ['ignore','pipe','pipe'] to execFile", async 
   assert.deepEqual(capturedOptions.stdio, ["ignore", "pipe", "pipe"])
 })
 
-test("GeminiBackend passes stdio: ['ignore','pipe','pipe'] to execFile", async () => {
-  capturedOptions = null
-  const backend = new GeminiBackend()
-  await backend.sendMessage({ sessionId: null, directory: tmpdir(), text: "hi" })
-  assert.ok(capturedOptions !== null, "execFile should have been called")
-  assert.deepEqual(capturedOptions.stdio, ["ignore", "pipe", "pipe"])
-})
+// GeminiBackend now uses spawn (not execFile) with stdio: ["ignore","pipe","pipe"].
+// Spawn-level behavior is covered by integration tests in gemini-parser.test.js.
 
 // ClaudeBackend now uses spawn (not execFile) with stdio: ["pipe","pipe","pipe"].
 // Spawn-level behavior is covered by integration tests in claude-parser.test.js.

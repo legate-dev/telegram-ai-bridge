@@ -440,65 +440,85 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       await ctx.answerCallbackQuery({ text: label })
 
       try {
-        await pending.backend.kilo.replyToPermission(
-          requestId,
-          reply === "deny" ? "reject" : reply,
-        )
-        // Determine whether we need to resume the paused Kilo turn.
-        // Lock inFlightChats before releasing the pending-permission guard so
-        // there is never a window where both guards are absent simultaneously.
-        const canResume = pending.sessionId != null && pending.backend?.resumeTurn != null
-        if (canResume) {
-          inFlightChats.add(chatKey)
-        }
-        // Delete only after a successful reply so the user can retry if it fails.
-        deletePendingPermission(chatKey)
-        try {
-          await ctx.editMessageText(`${pending.text}\n\n${label}`)
-        } catch { /* message may be too old to edit */ }
-        log.info("telegram.callback", "permission_replied", {
-          chat_id: chatKey,
-          request_id: requestId,
-          reply,
-          persist: true,
-        })
-
-        // Resume the paused Kilo turn and deliver the model's response.
-        if (canResume) {
+        if (pending.binding.cli === "claude") {
+          // Claude: write control_response directly to the active process stdin.
+          // The for-await loop in processTextMessage resumes automatically —
+          // no resumeTurn() needed, and inFlightChats stays held by that loop.
+          const behavior = reply === "deny" ? "deny" : "allow"
+          pending.backend.replyPermission(requestId, behavior)
+          deletePendingPermission(chatKey)
           try {
-            const resumeResult = await pending.backend.resumeTurn(
-              pending.sessionId, pending.directory, pending.messageCountBefore,
-            )
-            if (resumeResult.permission) {
-              // Nested permission — surface it; the next perm: tap will resume again.
-              // resumeResult.messageCountBefore is always set by resumeTurn; the
-              // fallback to pending.messageCountBefore is a last-resort safety net.
-              await surfacePermission(
-                ctx, resumeResult.permission, chatKey,
-                pending.binding, pending.agent, pending.backend,
-                pending.sessionId, pending.directory,
-                resumeResult.messageCountBefore ?? pending.messageCountBefore,
-              )
-            } else if (resumeResult.question) {
-              // Mid-resume mcp_question — surface it; the q: callback will handle the reply.
-              await surfaceQuestion(ctx, resumeResult.question, chatKey, pending.binding, pending.agent, pending.backend)
-            } else if (resumeResult.text) {
-              await replyChunks(ctx, resumeResult.text)
-            } else if (resumeResult.error) {
-              await replyChunks(ctx, `kilo error: ${redactString(resumeResult.error)}`)
-            }
-          } catch (resumeErr) {
-            log.error("telegram.callback", "permission_resume_failed", {
-              chat_id: chatKey,
-              request_id: requestId,
-              error: redactString(String(resumeErr)),
-              persist: true,
-            })
+            await ctx.editMessageText(`${pending.text}\n\n${label}`)
+          } catch { /* message may be too old to edit */ }
+          log.info("telegram.callback", "permission_replied", {
+            chat_id: chatKey,
+            request_id: requestId,
+            reply,
+            cli: "claude",
+            persist: true,
+          })
+        } else {
+          // Kilo (and future backends with resumeTurn): existing round-trip logic.
+          await pending.backend.kilo.replyToPermission(
+            requestId,
+            reply === "deny" ? "reject" : reply,
+          )
+          // Determine whether we need to resume the paused Kilo turn.
+          // Lock inFlightChats before releasing the pending-permission guard so
+          // there is never a window where both guards are absent simultaneously.
+          const canResume = pending.sessionId != null && pending.backend?.resumeTurn != null
+          if (canResume) {
+            inFlightChats.add(chatKey)
+          }
+          // Delete only after a successful reply so the user can retry if it fails.
+          deletePendingPermission(chatKey)
+          try {
+            await ctx.editMessageText(`${pending.text}\n\n${label}`)
+          } catch { /* message may be too old to edit */ }
+          log.info("telegram.callback", "permission_replied", {
+            chat_id: chatKey,
+            request_id: requestId,
+            reply,
+            persist: true,
+          })
+
+          // Resume the paused Kilo turn and deliver the model's response.
+          if (canResume) {
             try {
-              await ctx.reply(`Permission was accepted but the turn could not be resumed: ${redactString(resumeErr.message)}`)
-            } catch { /* best-effort */ }
-          } finally {
-            inFlightChats.delete(chatKey)
+              const resumeResult = await pending.backend.resumeTurn(
+                pending.sessionId, pending.directory, pending.messageCountBefore,
+              )
+              if (resumeResult.permission) {
+                // Nested permission — surface it; the next perm: tap will resume again.
+                // resumeResult.messageCountBefore is always set by resumeTurn; the
+                // fallback to pending.messageCountBefore is a last-resort safety net.
+                await surfacePermission(
+                  ctx, resumeResult.permission, chatKey,
+                  pending.binding, pending.agent, pending.backend,
+                  pending.sessionId, pending.directory,
+                  resumeResult.messageCountBefore ?? pending.messageCountBefore,
+                )
+              } else if (resumeResult.question) {
+                // Mid-resume mcp_question — surface it; the q: callback will handle the reply.
+                await surfaceQuestion(ctx, resumeResult.question, chatKey, pending.binding, pending.agent, pending.backend)
+              } else if (resumeResult.text) {
+                await replyChunks(ctx, resumeResult.text)
+              } else if (resumeResult.error) {
+                await replyChunks(ctx, `kilo error: ${redactString(resumeResult.error)}`)
+              }
+            } catch (resumeErr) {
+              log.error("telegram.callback", "permission_resume_failed", {
+                chat_id: chatKey,
+                request_id: requestId,
+                error: redactString(String(resumeErr)),
+                persist: true,
+              })
+              try {
+                await ctx.reply(`Permission was accepted but the turn could not be resumed: ${redactString(resumeErr.message)}`)
+              } catch { /* best-effort */ }
+            } finally {
+              inFlightChats.delete(chatKey)
+            }
           }
         }
       } catch (err) {
@@ -723,7 +743,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         text_length: text.length,
       })
 
-      const result = await backend.sendMessage({
+      const maybeGenerator = backend.sendMessage({
         sessionId: binding.session_id,
         directory: binding.directory,
         text,
@@ -731,78 +751,109 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         model: binding.model ?? null,
       })
 
-      if (result.error) {
-        log.warn("telegram.message", "backend.send.error_result", {
-          trace_id: traceId,
-          chat_id: chatKey,
-          cli: binding.cli,
-          session_id: binding.session_id,
-          latency_ms: Date.now() - startedAt,
-          message: result.error,
-          persist: true,
-        })
-        await replyChunks(ctx, `${binding.cli} error: ${redactString(result.error)}`)
-        return
-      }
+      if (maybeGenerator != null && typeof maybeGenerator[Symbol.asyncIterator] === "function") {
+        // ── AsyncGenerator path (Claude) ──────────────────────────────────────
+        // Events stream in real-time. Permission events naturally pause the loop
+        // (Claude blocks on stdin); replyPermission() in the perm: callback resumes it.
+        const textParts = []
+        let genSessionId = null
 
-      if (result.question) {
-        log.info("telegram.message", "backend.send.question", {
-          trace_id: traceId,
-          chat_id: chatKey,
-          cli: binding.cli,
-          session_id: binding.session_id,
-          latency_ms: Date.now() - startedAt,
-          persist: true,
-        })
-        await surfaceQuestion(ctx, result.question, chatKey, binding, agent, backend)
-        return
-      }
+        for await (const event of maybeGenerator) {
+          if (event.type === "text") {
+            textParts.push(event.content)
+          } else if (event.type === "thinking") {
+            log.debug("telegram.message", "backend.send.thinking", {
+              cli: binding.cli,
+              session_id: binding.session_id,
+              length: event.content.length,
+            })
+          } else if (event.type === "tool_use") {
+            log.debug("telegram.message", "backend.send.tool_use", {
+              cli: binding.cli,
+              session_id: binding.session_id,
+              tool: event.toolName,
+              input: event.toolInput.slice(0, 120),
+            })
+          } else if (event.type === "permission") {
+            log.info("telegram.message", "backend.send.permission", {
+              trace_id: traceId,
+              chat_id: chatKey,
+              cli: binding.cli,
+              session_id: binding.session_id,
+              request_id: event.requestId,
+              tool: event.toolName,
+              latency_ms: Date.now() - startedAt,
+              persist: true,
+            })
+            // Normalize to the shape surfacePermission expects (matches Kilo's req format).
+            await surfacePermission(
+              ctx,
+              { id: event.requestId, permission: event.toolName, patterns: event.toolInput ? [event.toolInput] : [], metadata: {}, always: [] },
+              chatKey, binding, agent, backend,
+              null, null, -1,
+            )
+            // Do NOT return — the loop naturally suspends here because Claude is
+            // blocked on stdin. The perm: callback writes the control_response via
+            // backend.replyPermission(); Claude resumes and new events flow in.
+          } else if (event.type === "question") {
+            // Phase 1.1: auto-deny and ask the user to reply in the next message.
+            // Full AskUserQuestion round-trip (inline keyboard + proper control_response)
+            // is deferred to Phase 1.2.
+            log.info("telegram.message", "backend.send.question", {
+              trace_id: traceId,
+              chat_id: chatKey,
+              cli: binding.cli,
+              session_id: binding.session_id,
+              request_id: event.requestId,
+              persist: true,
+            })
+            const q = event.questions?.[0]
+            if (q?.question) {
+              await replyChunks(ctx, `Claude asks: ${q.question}\n\nPlease reply in your next message.`)
+            }
+            backend.replyPermission(event.requestId, "deny")
+          } else if (event.type === "result") {
+            genSessionId = event.sessionId
+            log.info("telegram.message", "backend.send.success", {
+              trace_id: traceId,
+              chat_id: chatKey,
+              cli: binding.cli,
+              session_id: genSessionId ?? binding.session_id,
+              latency_ms: Date.now() - startedAt,
+              reply_length: textParts.reduce((s, t) => s + t.length, 0),
+              input_tokens: event.inputTokens,
+              output_tokens: event.outputTokens,
+            })
+          } else if (event.type === "error") {
+            log.warn("telegram.message", "backend.send.error_result", {
+              trace_id: traceId,
+              chat_id: chatKey,
+              cli: binding.cli,
+              session_id: binding.session_id,
+              latency_ms: Date.now() - startedAt,
+              message: event.message,
+              persist: true,
+            })
+            await replyChunks(ctx, `${binding.cli} error: ${redactString(event.message)}`)
+            return
+          }
+        }
 
-      if (result.permission) {
-        log.info("telegram.message", "backend.send.permission", {
-          trace_id: traceId,
-          chat_id: chatKey,
-          cli: binding.cli,
-          session_id: binding.session_id,
-          request_id: result.permission.id,
-          permission: result.permission.permission,
-          latency_ms: Date.now() - startedAt,
-          persist: true,
-        })
-        await surfacePermission(
-          ctx, result.permission, chatKey, binding, agent, backend,
-          binding.session_id, binding.directory, result.messageCountBefore ?? -1,
-        )
-        // Permission prompt surfaced. The finally block releases inFlightChats.
-        // New messages are blocked by the hasPendingPermission guard above.
-        // The perm: callback handler will re-acquire inFlightChats and resume the turn.
-        return
-      }
-
-      if (result.text) {
-        // Update session ID if backend returned a new one (e.g. Codex thread).
-        //
-        // Compare-and-set: re-read the binding and verify the chat is still
-        // bound to the same session identity we captured at the start of the
-        // turn. If the user rebound the chat during the turn so that the cli,
-        // session_id, or directory changed (for example via /sessions or /new),
-        // the threadId update is stale and must be dropped — applying it would
-        // clobber the new binding with the old snapshot.
-        if (result.threadId && result.threadId !== binding.session_id) {
+        // Update session ID from result event (compare-and-set, same as legacy path).
+        if (genSessionId && genSessionId !== binding.session_id) {
           const currentBinding = getChatBinding(ctx.chat.id)
           const stillSameSession =
             currentBinding !== null &&
             currentBinding.cli === binding.cli &&
             currentBinding.session_id === binding.session_id &&
             currentBinding.directory === binding.directory
-
           if (stillSameSession) {
-            setChatBinding(ctx.chat.id, { ...currentBinding, session_id: result.threadId })
+            setChatBinding(ctx.chat.id, { ...currentBinding, session_id: genSessionId })
             log.info("telegram.message", "binding.thread_updated", {
               trace_id: traceId,
               chat_id: chatKey,
               cli: binding.cli,
-              session_id: result.threadId,
+              session_id: genSessionId,
               previous_session_id: binding.session_id,
               persist: true,
             })
@@ -815,32 +866,141 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
               original_session_id: binding.session_id,
               current_cli: currentBinding?.cli ?? null,
               current_session_id: currentBinding?.session_id ?? null,
-              new_thread_id: result.threadId,
+              new_thread_id: genSessionId,
               persist: true,
             })
           }
         }
-        log.info("telegram.message", "backend.send.success", {
+
+        const genReply = textParts.join("\n\n")
+        if (genReply) {
+          await replyChunks(ctx, genReply)
+        } else {
+          log.warn("telegram.message", "backend.send.empty_result", {
+            trace_id: traceId,
+            chat_id: chatKey,
+            cli: binding.cli,
+            session_id: binding.session_id,
+            latency_ms: Date.now() - startedAt,
+            persist: true,
+          })
+          await replyChunks(ctx, `${binding.cli} returned no text for this turn.`)
+        }
+      } else {
+        // ── Legacy Promise path (Kilo, Codex, Copilot, Gemini) ───────────────
+        const result = await maybeGenerator
+
+        if (result.error) {
+          log.warn("telegram.message", "backend.send.error_result", {
+            trace_id: traceId,
+            chat_id: chatKey,
+            cli: binding.cli,
+            session_id: binding.session_id,
+            latency_ms: Date.now() - startedAt,
+            message: result.error,
+            persist: true,
+          })
+          await replyChunks(ctx, `${binding.cli} error: ${redactString(result.error)}`)
+          return
+        }
+
+        if (result.question) {
+          log.info("telegram.message", "backend.send.question", {
+            trace_id: traceId,
+            chat_id: chatKey,
+            cli: binding.cli,
+            session_id: binding.session_id,
+            latency_ms: Date.now() - startedAt,
+            persist: true,
+          })
+          await surfaceQuestion(ctx, result.question, chatKey, binding, agent, backend)
+          return
+        }
+
+        if (result.permission) {
+          log.info("telegram.message", "backend.send.permission", {
+            trace_id: traceId,
+            chat_id: chatKey,
+            cli: binding.cli,
+            session_id: binding.session_id,
+            request_id: result.permission.id,
+            permission: result.permission.permission,
+            latency_ms: Date.now() - startedAt,
+            persist: true,
+          })
+          await surfacePermission(
+            ctx, result.permission, chatKey, binding, agent, backend,
+            binding.session_id, binding.directory, result.messageCountBefore ?? -1,
+          )
+          // Permission prompt surfaced. The finally block releases inFlightChats.
+          // New messages are blocked by the hasPendingPermission guard above.
+          // The perm: callback handler will re-acquire inFlightChats and resume the turn.
+          return
+        }
+
+        if (result.text) {
+          // Update session ID if backend returned a new one (e.g. Codex thread).
+          //
+          // Compare-and-set: re-read the binding and verify the chat is still
+          // bound to the same session identity we captured at the start of the
+          // turn. If the user rebound the chat during the turn so that the cli,
+          // session_id, or directory changed (for example via /sessions or /new),
+          // the threadId update is stale and must be dropped — applying it would
+          // clobber the new binding with the old snapshot.
+          if (result.threadId && result.threadId !== binding.session_id) {
+            const currentBinding = getChatBinding(ctx.chat.id)
+            const stillSameSession =
+              currentBinding !== null &&
+              currentBinding.cli === binding.cli &&
+              currentBinding.session_id === binding.session_id &&
+              currentBinding.directory === binding.directory
+
+            if (stillSameSession) {
+              setChatBinding(ctx.chat.id, { ...currentBinding, session_id: result.threadId })
+              log.info("telegram.message", "binding.thread_updated", {
+                trace_id: traceId,
+                chat_id: chatKey,
+                cli: binding.cli,
+                session_id: result.threadId,
+                previous_session_id: binding.session_id,
+                persist: true,
+              })
+            } else {
+              log.info("telegram.message", "binding.thread_update_skipped", {
+                trace_id: traceId,
+                chat_id: chatKey,
+                reason: "binding_changed_during_turn",
+                original_cli: binding.cli,
+                original_session_id: binding.session_id,
+                current_cli: currentBinding?.cli ?? null,
+                current_session_id: currentBinding?.session_id ?? null,
+                new_thread_id: result.threadId,
+                persist: true,
+              })
+            }
+          }
+          log.info("telegram.message", "backend.send.success", {
+            trace_id: traceId,
+            chat_id: chatKey,
+            cli: binding.cli,
+            session_id: result.threadId || binding.session_id,
+            latency_ms: Date.now() - startedAt,
+            reply_length: result.text.length,
+          })
+          await replyChunks(ctx, result.text)
+          return
+        }
+
+        log.warn("telegram.message", "backend.send.empty_result", {
           trace_id: traceId,
           chat_id: chatKey,
           cli: binding.cli,
-          session_id: result.threadId || binding.session_id,
+          session_id: binding.session_id,
           latency_ms: Date.now() - startedAt,
-          reply_length: result.text.length,
+          persist: true,
         })
-        await replyChunks(ctx, result.text)
-        return
+        await replyChunks(ctx, `${binding.cli} returned no text for this turn.`)
       }
-
-      log.warn("telegram.message", "backend.send.empty_result", {
-        trace_id: traceId,
-        chat_id: chatKey,
-        cli: binding.cli,
-        session_id: binding.session_id,
-        latency_ms: Date.now() - startedAt,
-        persist: true,
-      })
-      await replyChunks(ctx, `${binding.cli} returned no text for this turn.`)
     } catch (error) {
       log.error("telegram.message", "backend.send.exception", {
         trace_id: traceId,

@@ -37,6 +37,8 @@ await mock.module("node:child_process", {
         throw new Error(`not found: ${bin}`)
       }
     },
+    // ClaudeBackend uses spawn — provide a no-op so the import succeeds
+    spawn: () => ({ stdin: { write: () => {}, end: () => {} }, stdout: { on: () => {} }, stderr: { on: () => {} }, kill: () => {}, killed: false }),
   },
 })
 

@@ -31,6 +31,8 @@ await mock.module("node:child_process", {
       return { pid: 99999 }
     },
     execFileSync: () => "",
+    // ClaudeBackend uses spawn — provide a no-op so the import succeeds
+    spawn: () => ({ stdin: { write: () => {}, end: () => {} }, stdout: { on: () => {} }, stderr: { on: () => {} }, kill: () => {}, killed: false }),
   },
 })
 
@@ -131,21 +133,5 @@ test("GeminiBackend does not report quota error when killed (timeout takes prior
   assert.ok(/timed out or was killed/i.test(result.error), `killed error should take priority over quota error, got: ${result.error}`)
 })
 
-// ── Claude timeout tests ──
-
-test("ClaudeBackend returns error when killed with partial stdout", async () => {
-  mockExecFileFn = (cb) => setImmediate(() => cb(timeoutError, claudePartialStdout, ""))
-  const backend = new ClaudeBackend()
-  const result = await backend.sendMessage({ sessionId: null, directory: tmpdir(), text: "hi" })
-  assert.ok(result.error, "should return an error object")
-  assert.ok(/timed out or was killed/i.test(result.error), `error should mention 'timed out or was killed', got: ${result.error}`)
-  assert.ok(/Claude/i.test(result.error), `error should mention backend name 'Claude', got: ${result.error}`)
-  assert.ok(!result.text, "should not return text from partial stdout")
-})
-
-test("ClaudeBackend error message includes signal when killed", async () => {
-  mockExecFileFn = (cb) => setImmediate(() => cb(timeoutError, claudePartialStdout, ""))
-  const backend = new ClaudeBackend()
-  const result = await backend.sendMessage({ sessionId: null, directory: tmpdir(), text: "hi" })
-  assert.ok(result.error.includes("SIGTERM"), `error should include signal name, got: ${result.error}`)
-})
+// ClaudeBackend now uses spawn + setTimeout-based timeout (not execFile).
+// Timeout behavior is covered in claude-parser.test.js using real shell scripts.

@@ -440,14 +440,24 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       await ctx.answerCallbackQuery({ text: label })
 
       try {
-        await pending.backend.kilo.replyToPermission(
-          requestId,
-          reply === "deny" ? "reject" : reply,
-        )
+        const isClaude = pending.binding?.cli === "claude"
+        if (isClaude) {
+          // Claude AsyncGenerator path: replyPermission unblocks the in-flight
+          // generator. inFlightChats is managed entirely by processTextMessage
+          // so the callback does not touch it.
+          await pending.backend.replyPermission(requestId, reply)
+        } else {
+          await pending.backend.kilo.replyToPermission(
+            requestId,
+            reply === "deny" ? "reject" : reply,
+          )
+        }
         // Determine whether we need to resume the paused Kilo turn.
         // Lock inFlightChats before releasing the pending-permission guard so
         // there is never a window where both guards are absent simultaneously.
-        const canResume = pending.sessionId != null && pending.backend?.resumeTurn != null
+        // Claude turns are managed by the still-running generator loop, so
+        // resumeTurn is not needed and inFlightChats must not be touched here.
+        const canResume = !isClaude && pending.sessionId != null && pending.backend?.resumeTurn != null
         if (canResume) {
           inFlightChats.add(chatKey)
         }
@@ -723,13 +733,73 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         text_length: text.length,
       })
 
-      const result = await backend.sendMessage({
+      const maybeResult = backend.sendMessage({
         sessionId: binding.session_id,
         directory: binding.directory,
         text,
         agent,
         model: binding.model ?? null,
       })
+
+      // ── AsyncGenerator consumer path (e.g. Claude streaming) ──
+      // When sendMessage() returns an async iterable, consume typed events one
+      // by one rather than awaiting a single resolved value.
+      if (maybeResult != null && typeof maybeResult[Symbol.asyncIterator] === "function") {
+        const textParts = []
+        let newSessionId = null
+        let seenPermission = false
+
+        for await (const event of maybeResult) {
+          if (event.type === "text") {
+            textParts.push(event.text)
+          } else if (event.type === "result") {
+            if (event.sessionId) newSessionId = event.sessionId
+          } else if (event.type === "permission") {
+            await surfacePermission(
+              ctx, event, chatKey, binding, agent, backend,
+              binding.session_id, binding.directory, -1,
+            )
+            seenPermission = true
+          } else if (event.type === "question") {
+            // AskUserQuestion events are auto-denied in the streaming path so
+            // the generator can continue without user interaction.
+            if (event.requestId != null) {
+              await backend.replyPermission(event.requestId, "deny")
+            }
+          } else if (event.type === "error") {
+            await replyChunks(ctx, `${binding.cli} error: ${redactString(event.message)}`)
+            deletePendingPermission(chatKey)
+            return
+          }
+        }
+
+        // Compare-and-set: update session ID only when the binding hasn't
+        // changed during the turn (same pattern as the Promise path below).
+        if (newSessionId && newSessionId !== binding.session_id) {
+          const currentBinding = getChatBinding(ctx.chat.id)
+          const stillSameSession =
+            currentBinding !== null &&
+            currentBinding.cli === binding.cli &&
+            currentBinding.session_id === binding.session_id &&
+            currentBinding.directory === binding.directory
+          if (stillSameSession) {
+            setChatBinding(ctx.chat.id, { ...currentBinding, session_id: newSessionId })
+          }
+        }
+
+        const accumulated = textParts.join("\n\n")
+        if (accumulated) {
+          await replyChunks(ctx, accumulated)
+        } else if (!seenPermission) {
+          // Only surface "no text" when the generator yielded neither text nor a
+          // permission prompt — a permission prompt is itself a meaningful reply.
+          await replyChunks(ctx, `${binding.cli} returned no text for this turn.`)
+        }
+        return
+      }
+
+      // ── Legacy Promise path ──
+      const result = await maybeResult
 
       if (result.error) {
         log.warn("telegram.message", "backend.send.error_result", {

@@ -88,6 +88,38 @@ export function createMockBackend({ supported = true } = {}) {
 }
 
 /**
+ * Creates an AsyncGenerator mock backend that yields typed events, mirroring
+ * the Claude streaming backend interface. Useful for testing the
+ * Symbol.asyncIterator consumer path in message-handler.js.
+ *
+ * Event shapes accepted by message-handler's generator path:
+ *   { type: "text",       text: string }
+ *   { type: "result",     sessionId: string }
+ *   { type: "permission", id: string, permission: string, ... }
+ *   { type: "question",   requestId: string }
+ *   { type: "error",      message: string }
+ *
+ * @param {Array<object>} events - Sequence of events to yield.
+ */
+export function createMockGeneratorBackend(events) {
+  return {
+    name: "claude",
+    supported: true,
+    /** Tracks calls made to replyPermission — inspectable in tests. */
+    replyPermissionCalls: [],
+    replyPermission(requestId, decision) {
+      this.replyPermissionCalls.push({ requestId, decision })
+    },
+    async *sendMessage() {
+      for (const event of events) yield event
+    },
+    createSession: async () => ({ id: "claude-mock-1" }),
+    abortSession: async () => {},
+    getSessionStatus: async () => null,
+  }
+}
+
+/**
  * Creates a minimal mock Grammy bot that captures `on()` handlers.
  * Access captured handlers via `bot.handlers["event:name"]`.
  */

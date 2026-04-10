@@ -192,6 +192,20 @@ test("allowEverything POSTs to /allow-everything with enable and requestID (glob
   assert.deepEqual(capturedBody, { enable: true, requestID: "req-global" })
 })
 
+test("allowEverything throws TypeError when enable is not a boolean", async () => {
+  const client = makeKiloClient()
+  await assert.rejects(
+    () => client.allowEverything({ enable: "yes" }),
+    (err) => err instanceof TypeError && err.message.includes("enable"),
+    "should throw TypeError for non-boolean enable value",
+  )
+  await assert.rejects(
+    () => client.allowEverything({}),
+    TypeError,
+    "should throw TypeError when enable is omitted",
+  )
+})
+
 test("allowEverything includes sessionID in body for session-scoped call", async () => {
   const client = makeKiloClient()
   let capturedBody

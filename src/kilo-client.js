@@ -231,6 +231,9 @@ export class KiloClient {
    *               other pending permissions before returning
    */
   async allowEverything({ enable, sessionID, requestID } = {}) {
+    if (typeof enable !== "boolean") {
+      throw new TypeError(`allowEverything: opts.enable must be a boolean, got ${typeof enable}`)
+    }
     const body = { enable }
     if (sessionID != null) body.sessionID = sessionID
     if (requestID != null) body.requestID = requestID

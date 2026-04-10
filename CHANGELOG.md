@@ -13,6 +13,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-10
+
+### Added
+
+- **Gemini streaming backend** (#37). Migrated `GeminiBackend` from
+  one-shot `execFile -o json` to `spawn`-per-turn with
+  `--output-format stream-json`, matching the `AsyncGenerator` interface
+  established by Claude. The bridge now surfaces Gemini responses in real
+  time as they arrive: `delta:true` chunks are forwarded immediately,
+  `delta:false` reasoning fragments are buffered and discarded if a tool
+  call follows (preventing planning noise from leaking into chat),
+  and the final answer is flushed when the `result` event arrives. Timeout
+  errors now report the exact wait time. The `spawn` error handler catches
+  missing-binary failures cleanly. No interactive permissions: Gemini CLI
+  has no stdio permission protocol (`-y` keeps auto-approve as before).
+
+- **Kilo allow-everything permission mode** (#38). The Kilo permission
+  prompt in Telegram now shows two extra buttons below the existing row:
+  **⚡ Allow everything (session)** and **🌐 Allow everything (global)**.
+  Tapping either calls Kilo's `POST /allow-everything`, which immediately
+  resolves the pending request, drains every other queued permission for
+  the same scope, and installs a wildcard `{ permission:'*', pattern:'*',
+  action:'allow' }` rule — scoped to the current session for ⚡ or
+  persisted in `opencode.json` for 🌐. Claude and Gemini prompts are
+  unchanged. The extra row renders only when the active backend exposes
+  `kilo.allowEverything`; forged taps on non-Kilo sessions are rejected
+  with an alert.
+
 ## [0.4.0] - 2026-04-10
 
 ### Added

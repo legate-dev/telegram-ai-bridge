@@ -775,13 +775,13 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
               return
             }
           }
-        } catch (streamError) {
+        } catch (error) {
           // If the stream/generator throws after surfacing a permission prompt,
           // clear the pending state so future turns are not blocked indefinitely.
           if (seenPermission) {
             deletePendingPermission(chatKey)
           }
-          throw streamError
+          throw error
         }
 
         // Compare-and-set: update session ID only when the binding hasn't

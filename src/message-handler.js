@@ -123,6 +123,12 @@ export function setPendingPermission(chatKey, data) {
     if (pendingPermissions.get(chatKey) === entry) {
       pendingPermissions.delete(chatKey)
       log.debug("telegram.message", "pending_permission.ttl_expired", { chat_id: chatKey })
+      // For Claude: the generator is suspended on stdin waiting for a control_response.
+      // If the TTL fires without a user reply, send a deny so the generator can resume
+      // and the turn can complete (or error out), releasing inFlightChats.
+      if (entry.binding?.cli === "claude" && typeof entry.backend?.replyPermission === "function") {
+        entry.backend.replyPermission(entry.requestId, "deny")
+      }
     }
   }, config.bridgePendingPermissionTtlMs)
   entry.timeoutId.unref?.()
@@ -209,6 +215,12 @@ async function surfaceQuestion(ctx, questionData, chatKey, binding, agent, backe
 
   // A self-cancelling setTimeout ensures the entry is removed after PENDING_QUESTION_TTL_MS
   // even if the user never responds (active cleanup, not lazy).
+  //
+  // TODO Phase 1.2: For Claude's AskUserQuestion, the q: callback must branch on
+  // `pending.binding.cli === "claude"` and call backend.replyPermission(requestId, answer)
+  // instead of spawning a new turn. This requires storing requestId here and a separate
+  // `cq:` callback prefix (or a cli-branch in the existing `q:` handler) to keep
+  // Claude's control_response flow isolated from Kilo's new-turn flow.
   setPendingQuestion(chatKey, { binding, agent, backend, options, questionText })
 
   // Use replyChunks for question text (can exceed Telegram's 4096 char limit)
@@ -809,7 +821,8 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
             })
             const q = event.questions?.[0]
             if (q?.question) {
-              await replyChunks(ctx, `Claude asks: ${q.question}\n\nPlease reply in your next message.`)
+              // redactString to prevent model-generated content from leaking secrets
+              await replyChunks(ctx, `Claude asks: ${redactString(q.question)}\n\nPlease reply in your next message.`)
             }
             backend.replyPermission(event.requestId, "deny")
           } else if (event.type === "result") {
@@ -825,6 +838,10 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
               output_tokens: event.outputTokens,
             })
           } else if (event.type === "error") {
+            // Clear any pending permission entry — the turn is over, the generator will not
+            // resume. Without this, a crash or timeout mid-permission would leave the chat
+            // permanently blocked by hasPendingPermission (recoverable via /abort, but silent).
+            deletePendingPermission(chatKey)
             log.warn("telegram.message", "backend.send.error_result", {
               trace_id: traceId,
               chat_id: chatKey,

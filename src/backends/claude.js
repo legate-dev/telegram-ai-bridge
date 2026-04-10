@@ -129,7 +129,24 @@ export class ClaudeBackend {
       stdio: ["pipe", "pipe", "pipe"],
     })
 
+    // NOTE: _activeTurnProcess is a single field on this singleton instance.
+    // inFlightChats prevents concurrent turns from the same chat, but two different
+    // chat IDs could theoretically race here. With TELEGRAM_ALLOWED_USER_ID limiting
+    // access to one user, concurrent multi-chat usage is unlikely in practice.
+    // If multi-chat support is added, replace with a Map<chatKey, ChildProcess>.
     this._activeTurnProcess = proc
+
+    // Suppress async EPIPE and other stream errors on stdin.
+    // These occur when Claude exits while we attempt a late write (e.g. replyPermission
+    // after TTL expiry killed the process). Without this handler the error propagates
+    // as an uncaughtException and crashes the bridge.
+    proc.stdin.on("error", (err) => {
+      log.debug("claude.backend", "stdin.error", {
+        cli: "claude",
+        session_id: sessionId,
+        error: String(err),
+      })
+    })
 
     // Send the user message as the first stdin line.
     proc.stdin.write(

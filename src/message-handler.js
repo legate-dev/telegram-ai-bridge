@@ -440,11 +440,14 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       await ctx.answerCallbackQuery({ text: label })
 
       try {
-        const isClaude = pending.binding?.cli === "claude"
-        if (isClaude) {
-          // Claude AsyncGenerator path: replyPermission unblocks the in-flight
-          // generator. inFlightChats is managed entirely by processTextMessage
-          // so the callback does not touch it.
+        // Capability-based routing: if the backend exposes replyPermission(), it
+        // owns the streaming turn lifecycle and the callback must not touch
+        // inFlightChats. Otherwise fall through to the Kilo HTTP path.
+        const isStreamingBackend = typeof pending.backend?.replyPermission === "function"
+        if (isStreamingBackend) {
+          // AsyncGenerator path: replyPermission unblocks the in-flight generator.
+          // inFlightChats is managed entirely by processTextMessage, so the
+          // callback must not touch it.
           await pending.backend.replyPermission(requestId, reply)
         } else {
           await pending.backend.kilo.replyToPermission(
@@ -455,9 +458,9 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         // Determine whether we need to resume the paused Kilo turn.
         // Lock inFlightChats before releasing the pending-permission guard so
         // there is never a window where both guards are absent simultaneously.
-        // Claude turns are managed by the still-running generator loop, so
+        // Streaming backends are managed by the still-running generator loop, so
         // resumeTurn is not needed and inFlightChats must not be touched here.
-        const canResume = !isClaude && pending.sessionId != null && pending.backend?.resumeTurn != null
+        const canResume = !isStreamingBackend && pending.sessionId != null && pending.backend?.resumeTurn != null
         if (canResume) {
           inFlightChats.add(chatKey)
         }

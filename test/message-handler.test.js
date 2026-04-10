@@ -960,7 +960,7 @@ test("AsyncGenerator: permission event → surfacePermission called; setPendingP
   clearPendingPermission(String(chatId))
 })
 
-test("AsyncGenerator: perm: callback claude branch → backend.replyPermission called; inFlightChats not touched; deletePendingPermission called", async () => {
+test("AsyncGenerator: perm: callback streaming-backend branch → backend.replyPermission called; inFlightChats not touched; deletePendingPermission called", async () => {
   resetMocks()
   const chatId = 3004
   activeGeneratorBackend = createMockGeneratorBackend([

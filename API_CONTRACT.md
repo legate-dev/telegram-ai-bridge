@@ -45,7 +45,7 @@ replyPermission(requestId, reply)
 
 - Streamed `text` events are concatenated without separator (they are partial chunks of one continuous response)
 - `result` is the end-of-turn marker; `sessionId` replaces the binding's `session_id` (compare-and-set)
-- `permission` surfaces an inline keyboard and sets `pendingPermission`; the user's response is delivered via the `perm:` callback to `replyPermission()`. The `perm:` callback does **not** touch `inFlightChats` — the generator loop owns the turn lifecycle
+- `permission` surfaces an inline keyboard and sets `pendingPermission`; the user's response is delivered via the `perm:` callback to `replyPermission()`. The `perm:` callback detects streaming backends by capability (`typeof backend.replyPermission === "function"`) rather than by CLI name, so it does **not** touch `inFlightChats` — the generator loop owns the turn lifecycle
 - `question` events are auto-denied via `replyPermission(requestId, "deny")` so the generator can continue without user interaction
 - `error` surfaces the error message and clears any pending permission state for this chat
 

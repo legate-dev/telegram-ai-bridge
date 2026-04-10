@@ -86,10 +86,10 @@ The bridge auto-detects which CLIs you have installed and only shows those in th
 
 | CLI | Mode | Status |
 |-----|------|--------|
-| **Claude Code** | `claude -p --output-format json` | ✅ Full support |
+| **Claude Code** | `claude --output-format stream-json` (AsyncGenerator; interactive permission prompts opt-in) | ✅ Full support |
 | **Codex** | `codex exec --json` | ✅ Full support |
 | **Copilot** | `copilot -p --output-format json` | ✅ Full support |
-| **Gemini** | `gemini -p -o json` | ✅ Full support |
+| **Gemini** | `gemini --output-format stream-json` (AsyncGenerator; `-y` auto-approve) | ✅ Full support |
 | **Kilo** | HTTP API (`kilo serve`, bridge-managed) | ✅ Full support |
 | Qwen | Session scanning only | Browse & resume |
 

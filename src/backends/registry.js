@@ -38,7 +38,9 @@ export function detectAvailableClis() {
   }
 
   for (const [name, backend] of Object.entries(BACKENDS)) {
-    const hasBinary = name === "kilo" || isBinaryAvailable(binaries[name])
+    // kilo and lmstudio are HTTP-based — no binary to check; reachability
+    // is validated at runtime when the first message is sent.
+    const hasBinary = name === "kilo" || name === "lmstudio" || isBinaryAvailable(binaries[name])
     backend.supported = hasBinary
   }
 }

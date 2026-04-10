@@ -13,6 +13,17 @@ export function getDb() {
   _db.pragma("busy_timeout = 3000")
 
   _db.exec(`
+    CREATE TABLE IF NOT EXISTS lmstudio_messages (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT    NOT NULL,
+      role       TEXT    NOT NULL,
+      content    TEXT    NOT NULL,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lmstudio_messages_session
+      ON lmstudio_messages (session_id, id);
+
     CREATE TABLE IF NOT EXISTS cli_sessions (
       cli                   TEXT NOT NULL,
       session_id            TEXT NOT NULL,
@@ -318,4 +329,31 @@ export function setChatBinding(chatId, binding) {
 export function clearChatBinding(chatId) {
   const db = getDb()
   db.prepare("DELETE FROM chat_bindings WHERE chat_id = ?").run(String(chatId))
+}
+
+// -- lmstudio_messages queries --
+
+/**
+ * Returns the full conversation history for an LM Studio session, ordered
+ * by insertion time. Used to prepend context to each new request.
+ * @param {string} sessionId
+ * @returns {{ role: string, content: string }[]}
+ */
+export function getLmStudioMessages(sessionId) {
+  return getDb()
+    .prepare("SELECT role, content FROM lmstudio_messages WHERE session_id = ? ORDER BY id")
+    .all(sessionId)
+}
+
+/**
+ * Appends a single message to the LM Studio conversation history.
+ * Call with role="user" before sending and role="assistant" after receiving.
+ * @param {string} sessionId
+ * @param {"user"|"assistant"|"system"} role
+ * @param {string} content
+ */
+export function appendLmStudioMessage(sessionId, role, content) {
+  getDb()
+    .prepare("INSERT INTO lmstudio_messages (session_id, role, content) VALUES (?, ?, ?)")
+    .run(sessionId, role, content)
 }

@@ -13,6 +13,8 @@ const availableBinaries = new Set()
 await mock.module("../src/db.js", {
   namedExports: {
     sessionCountsByCli: () => mockSessionCounts,
+    getLmStudioMessages: () => [],
+    appendLmStudioMessage: () => {},
   },
 })
 
@@ -49,6 +51,7 @@ const {
   CopilotBackend,
   GeminiBackend,
   ClaudeBackend,
+  LmStudioBackend,
   registerBackend,
   supportedClis,
   detectAvailableClis,
@@ -60,6 +63,7 @@ registerBackend(new CodexBackend())
 registerBackend(new CopilotBackend())
 registerBackend(new GeminiBackend())
 registerBackend(new ClaudeBackend())
+registerBackend(new LmStudioBackend())
 
 function resetMocks() {
   mockSessionCounts.length = 0
@@ -68,14 +72,15 @@ function resetMocks() {
 
 // ── Tests ──
 
-test("non-kilo backends default to supported=false; kilo is always available", () => {
+test("non-binary backends default to supported=true; binary backends require installation", () => {
   resetMocks()
   // Run detection with no sessions and no binaries
   detectAvailableClis()
   const supported = supportedClis()
-  // Kilo is HTTP-based so it is always available
+  // kilo and lmstudio are HTTP-based so they are always considered available
   assert.ok(supported.includes("kilo"), "kilo should always be supported (HTTP-based)")
-  // No other CLI is installed
+  assert.ok(supported.includes("lmstudio"), "lmstudio should always be supported (HTTP-based)")
+  // No CLI binary is installed
   assert.ok(!supported.includes("codex"), "codex should not be supported when not installed")
   assert.ok(!supported.includes("copilot"), "copilot should not be supported when not installed")
   assert.ok(!supported.includes("gemini"), "gemini should not be supported when not installed")
@@ -110,14 +115,15 @@ test("detectAvailableClis marks CLIs with available binary as supported", () => 
   assert.ok(!supported.includes("codex"), "codex should not be supported")
 })
 
-test("kilo is always supported regardless of binary check", () => {
+test("HTTP-based backends always supported regardless of binary check", () => {
   resetMocks()
-  // No binaries available, no sessions — but kilo uses HTTP so it's always on
+  // No binaries available, no sessions — kilo and lmstudio use HTTP so always on
 
   detectAvailableClis()
 
   const supported = supportedClis()
   assert.ok(supported.includes("kilo"), "kilo should always be supported (HTTP-based)")
+  assert.ok(supported.includes("lmstudio"), "lmstudio should always be supported (HTTP-based)")
 })
 
 test("detectAvailableClis only marks CLIs supported when the runtime can execute them", () => {

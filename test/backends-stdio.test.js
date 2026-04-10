@@ -32,6 +32,8 @@ await mock.module("../src/log.js", {
 await mock.module("../src/db.js", {
   namedExports: {
     sessionCountsByCli: () => [],
+    getLmStudioMessages: () => [],
+    appendLmStudioMessage: () => {},
   },
 })
 

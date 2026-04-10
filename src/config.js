@@ -125,4 +125,10 @@ export const config = {
   binClaude: value("BIN_CLAUDE", "claude"),
 
   dryRun: bool("BRIDGE_DRY_RUN"),
+
+  // ── LM Studio (local OpenAI-compatible server) ──
+  lmstudioBaseUrl: value("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234").replace(/\/$/, ""),
+  lmstudioModel: value("LMSTUDIO_MODEL", ""),
+  lmstudioTimeoutMs: parseInt(value("LMSTUDIO_TIMEOUT_MS", "120000"), 10),
+  lmstudioMaxTokens: parseInt(value("LMSTUDIO_MAX_TOKENS", "2048"), 10),
 }

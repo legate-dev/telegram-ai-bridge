@@ -221,6 +221,27 @@ export class KiloClient {
   }
 
   /**
+   * Enable or disable "allow everything" mode — auto-approves all tool permissions.
+   *
+   * @param {{ enable: boolean, sessionID?: string, requestID?: string }} opts
+   *   enable    — true to activate, false to deactivate
+   *   sessionID — scope to this session only (omit for global / all sessions)
+   *   requestID — the pending permission request that triggered the call;
+   *               when provided Kilo resolves it immediately AND drains all
+   *               other pending permissions before returning
+   */
+  async allowEverything({ enable, sessionID, requestID } = {}) {
+    const body = { enable }
+    if (sessionID != null) body.sessionID = sessionID
+    if (requestID != null) body.requestID = requestID
+    return this.request("/allow-everything", {
+      method: "POST",
+      body,
+      timeoutMs: config.kiloStatusTimeoutMs,
+    })
+  }
+
+  /**
    * @deprecated Synchronous message path replaced by promptAsync() + waitForTurn().
    * Kept as a fallback only; not used in production.
    */

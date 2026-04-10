@@ -269,7 +269,7 @@ Promoted Claude from session discovery to first-class live chat backend.
 **Gate:** Send a message from Telegram to a bound Claude session and receive a real Claude response.
 
 - [x] `claude --output-format stream-json` streams events via AsyncGenerator (`text`, `thinking`, `tool_use`, `permission`, `result`)
-- [x] `ClaudeBackend` with session resume via `-r <session-id>`
+- [x] `ClaudeBackend` with session resume via `--resume <session-id>`
 - [x] AsyncGenerator parser accumulates text chunks and extracts `result.session_id`
 - [x] Permission mode: `--permission-mode bypassPermissions` (default) or `--permission-prompt-tool stdio` (opt-in interactive, `BRIDGE_CLAUDE_DANGEROUS_SKIP_PERMISSIONS=false`)
 - [x] Full MCP toolstack available (memory, RAG, etc.)

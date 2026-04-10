@@ -72,7 +72,7 @@ Kilo has a runtime permission engine that pauses a turn server-side when the AI 
 
 1. **Poll** — during `waitForTurn`, every `permissionCheckEveryNPolls = 2` iterations, the client calls `GET /permission` to fetch the pending-permission queue. The queue is **project-wide** (not session-scoped), so `_checkForPendingPermission(sessionId)` filters by `req.sessionID === sessionId` before returning
 2. **Surface** — when a matching pending permission is detected, `KiloBackend.sendMessage` returns `{ permission, messageCountBefore }` (instead of aborting the turn). The message handler calls `surfacePermission` which stores a `pendingPermissions[chatKey]` entry with TTL and sends the user an inline keyboard with five buttons across two rows: `✅ Allow once` / `✓✓ Always allow` / `❌ Deny` and `⚡ Allow everything (session)` / `🌐 Allow everything (global)`. **The original turn is NOT aborted** — Kilo holds it server-side waiting for the reply
-3. **Reply** — when the user taps a button, the callback handler validates the untrusted reply value against `{once, always, deny}`, checks for stale requestId, guards against concurrent taps via `pending.replying` flag, answers the Telegram callback immediately (before the network POST to respect Telegram's ~10 s deadline), then calls `POST /permission/:id/reply` with the reply value (`deny` maps to Kilo's `reject`)
+3. **Reply** — when the user taps a button, the callback handler first parses the callback data by prefix. Standard permission buttons use `perm:<reply>:<requestId>`: the handler validates the untrusted `<reply>` against `{once, always, deny}`, checks for stale `requestId`, guards against concurrent taps via `pending.replying` flag, answers the Telegram callback immediately (before the network POST to respect Telegram's ~10 s deadline), then calls `POST /permission/:id/reply` with the reply value (`deny` maps to Kilo's `reject`). The two “allow everything” buttons use a separate `ae:<scope>:<requestId>` path with its own validation (`<scope>` is `session` or `global`) and call `POST /allow-everything` — `ae:` does **not** use the `{once, always, deny}` validation set
 4. **Resume** — if the POST succeeds, the handler calls `pending.backend.resumeTurn(sessionId, directory, messageCountBefore)` to continue the paused Kilo turn. `resumeTurn` can itself return `{ permission }` (nested permission chain, recursive surfacing), `{ question }` (mid-resume `mcp_question`, normal question surfacing), `{ text }` (model output, normal reply), or `{ error }` (surface error to user)
 
 The callback handler uses a **no-window lock pattern**: `inFlightChats.add(chatKey)` is called *before* `deletePendingPermission(chatKey)` so there is never a moment where both guards are absent simultaneously. Inverting the order opens a race where a concurrent Telegram message could start a new turn against the paused backend state. See OPERATIONS.md invariants for the full list of permission-flow invariants.
@@ -95,12 +95,12 @@ See DECISION_LOG 2026-04-08 for the full architectural rationale, alternatives c
 
 ### Claude Code Backend (spawn + AsyncGenerator)
 
-- Spawns `claude --input-format stream-json --output-format stream-json` per turn; user prompt delivered on stdin as a stream-json message; stdin closed after send
+- Spawns `claude --input-format stream-json --output-format stream-json` per turn; user prompt delivered on stdin as a stream-json message; stdin remains open to allow `control_response` messages for permission prompts and is closed after the `result` event so the process can exit cleanly
 - Streams events via AsyncGenerator: `text`, `thinking`, `tool_use`, `permission`, `result`, `error`
 - Permission mode controlled by `BRIDGE_CLAUDE_DANGEROUS_SKIP_PERMISSIONS` (default `true`):
   - `true` — `--permission-mode bypassPermissions` (all tools auto-approved)
   - `false` — `--permission-prompt-tool stdio` (permission events surface as Telegram inline keyboard)
-- Session resume via `-r <session-id>`
+- Session resume via `--resume <session-id>`
 - Full MCP toolstack available (memory, RAG, etc.)
 - Supports `--model` (sonnet, opus) and `--effort` (low, medium, high, max)
 

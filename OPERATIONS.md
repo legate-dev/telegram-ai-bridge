@@ -109,7 +109,7 @@
 
 ### P3 — CLI argument spoofing via leading hyphen in user prompt
 
-- **Trigger:** From the pre-public tripartite (Gemini R1, `review/pre-public-v031-security-input-gemini.md`). Codex and Copilot append the user's prompt as the last positional argument of an `execFile` call without a `--` terminator. A prompt like `--help` or `--version` will therefore be parsed by the target CLI as a flag instead of a prompt payload. Claude and Gemini are not affected — both now deliver the prompt via stdin (stream-json), not as a positional argument
+- **Trigger:** From the pre-public tripartite (Gemini R1, `review/pre-public-v031-security-input-gemini.md`). The vulnerable surface is backends that append the user's prompt as a bare positional argument to `execFile` without a `--` terminator. In the current implementation, **Codex** is the affected case (prompt appended as the last positional arg). Copilot and Gemini pass the prompt as the value to `-p`, and Claude delivers the prompt via stdin (stream-json) — none of those three are described by this issue. A prompt like `--help` or `--version` sent to a Codex session will be parsed by the CLI as a flag instead of prompt payload
 - **Blast radius:** Functional only — the user is already authenticated; they can already ask the AI to do anything. The worst case is the bridge returning raw CLI `--help` output and failing JSON parsing, surfacing a confusing "parser failure" error instead of an AI turn. No privilege escalation, no injection beyond what the user already has
 - **Fix:** Append `--` before the positional `text` argument in each backend's `args` array. Verify each CLI's argument parser supports `--` as an end-of-options terminator (most GNU-style parsers do; exotic CLIs may need a workaround)
 - **Done when:** Sending `--help` as a Telegram message to a bound session returns an AI turn, not a CLI help dump
@@ -179,6 +179,6 @@ All items below were resolved during the initial hardening session and Copilot a
 |------|---------|----------------------|------------------|
 | Auth | Unauthorized Telegram user | Reject request | NDJSON + persisted warn/error |
 | Transport | `ECONNREFUSED`, timeout | Explain backend unavailable | NDJSON + persisted error |
-| Parser | CLI exits without a `result` event | Structured error surfaced to user | Persisted error event |
+| Parser | CLI exits without a `result` event | Structured error surfaced to user | Persisted warning event |
 | Session state | Kilo busy/stuck | Abort or advise `/new` | Persisted warning event |
 | Formatting | Telegram Markdown parse failure | Plain-text fallback | NDJSON warning |

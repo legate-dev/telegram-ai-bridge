@@ -755,6 +755,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
               textParts.push(event.text)
             } else if (event.type === "result") {
               if (event.sessionId) newSessionId = event.sessionId
+              break
             } else if (event.type === "permission") {
               seenPermission = true
               await surfacePermission(

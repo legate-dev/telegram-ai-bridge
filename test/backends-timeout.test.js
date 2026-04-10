@@ -107,31 +107,8 @@ test("CopilotBackend error message includes signal when killed", async () => {
   assert.ok(result.error.includes("SIGTERM"), `error should include signal name, got: ${result.error}`)
 })
 
-// ── Gemini timeout tests ──
-
-test("GeminiBackend returns error when killed with partial stdout", async () => {
-  mockExecFileFn = (cb) => setImmediate(() => cb(timeoutError, geminiPartialStdout, ""))
-  const backend = new GeminiBackend()
-  const result = await backend.sendMessage({ sessionId: null, directory: tmpdir(), text: "hi" })
-  assert.ok(result.error, "should return an error object")
-  assert.ok(/timed out or was killed/i.test(result.error), `error should mention 'timed out or was killed', got: ${result.error}`)
-  assert.ok(/Gemini/i.test(result.error), `error should mention backend name 'Gemini', got: ${result.error}`)
-  assert.ok(!result.text, "should not return text from partial stdout")
-})
-
-test("GeminiBackend error message includes signal when killed", async () => {
-  mockExecFileFn = (cb) => setImmediate(() => cb(timeoutError, geminiPartialStdout, ""))
-  const backend = new GeminiBackend()
-  const result = await backend.sendMessage({ sessionId: null, directory: tmpdir(), text: "hi" })
-  assert.ok(result.error.includes("SIGTERM"), `error should include signal name, got: ${result.error}`)
-})
-
-test("GeminiBackend does not report quota error when killed (timeout takes priority)", async () => {
-  mockExecFileFn = (cb) => setImmediate(() => cb(timeoutError, geminiPartialStdout, "exhausted your capacity"))
-  const backend = new GeminiBackend()
-  const result = await backend.sendMessage({ sessionId: null, directory: tmpdir(), text: "hi" })
-  assert.ok(/timed out or was killed/i.test(result.error), `killed error should take priority over quota error, got: ${result.error}`)
-})
+// GeminiBackend now uses spawn + setTimeout-based timeout (not execFile).
+// Timeout behavior is covered in gemini-parser.test.js using real shell scripts.
 
 // ClaudeBackend now uses spawn + setTimeout-based timeout (not execFile).
 // Timeout behavior is covered in claude-parser.test.js using real shell scripts.

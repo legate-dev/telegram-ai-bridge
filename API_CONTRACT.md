@@ -14,11 +14,44 @@ sendMessage({ sessionId, directory, text, agent, model })
   |  { error: string }
   |  { question: { questions: Array, precedingText?: string } }
   |  { permission: { id: string, sessionID: string, permission: string, patterns: string[], metadata: object, always: string[] }, messageCountBefore: number }
+  |  AsyncIterable<StreamEvent>   // streaming path — see below
 ```
 
-### Behavioral rules
+### Streaming backend (AsyncIterable return form)
 
-- `sendMessage()` should return `{ error }` for expected model/runtime failures
+When `sendMessage()` returns an object with `Symbol.asyncIterator`, the handler consumes it as a stream of typed events rather than awaiting a single resolved object. Streaming backends must also implement `replyPermission()`.
+
+**Event shapes:**
+
+```javascript
+{ type: "text",       text: string }                   // partial response chunk
+{ type: "result",     sessionId?: string }             // turn complete; sessionId updates binding when present
+{ type: "permission", id: string, permission: string,
+                      patterns?: string[] }            // permission request (surfaces inline keyboard)
+{ type: "question",   requestId: string }              // auto-denied; loop continues
+{ type: "error",      message: string }                // terminal error for this turn
+```
+
+**Required companion method:**
+
+```javascript
+replyPermission(requestId, reply)
+  // reply: "once" | "always" | "deny"
+  // Called by the perm: callback when the user responds to a permission prompt,
+  // and automatically called with "deny" for question events (auto-deny path).
+```
+
+**Behavioral rules (streaming path):**
+
+- Streamed `text` events are concatenated without separator (they are partial chunks of one continuous response)
+- `result` is the end-of-turn marker; `sessionId` replaces the binding's `session_id` (compare-and-set)
+- `permission` surfaces an inline keyboard and sets `pendingPermission`; the user's response is delivered via the `perm:` callback to `replyPermission()`. The `perm:` callback does **not** touch `inFlightChats` — the generator loop owns the turn lifecycle
+- `question` events are auto-denied via `replyPermission(requestId, "deny")` so the generator can continue without user interaction
+- `error` surfaces the error message and clears any pending permission state for this chat
+
+### Behavioral rules (Promise path)
+
+
 - `sendMessage()` may throw for transport or integration failures
 - `sendMessage()` may return `{ question }` when the AI calls `mcp_question` mid-turn (Kilo only). The caller should surface the question to the user and re-submit their answer as a new turn. The conversation history already contains the question, so the AI can resume naturally.
 - `sendMessage()` may return `{ permission }` when Kilo's permission engine has a pending request (Kilo only). The caller should surface the permission prompt to the user via inline keyboard (Allow once / Always allow / Deny). **The original turn is NOT aborted** — Kilo holds it server-side and resumes automatically once the bridge POSTs a reply to `POST /permission/:id/reply`. The caller must not start a new turn.

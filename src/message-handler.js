@@ -749,30 +749,39 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         let newSessionId = null
         let seenPermission = false
 
-        for await (const event of maybeResult) {
-          if (event.type === "text") {
-            textParts.push(event.text)
-          } else if (event.type === "result") {
-            if (event.sessionId) newSessionId = event.sessionId
-          } else if (event.type === "permission") {
-            await surfacePermission(
-              ctx, event, chatKey, binding, agent, backend,
-              // messageCountBefore is used by the Kilo resumeTurn path; the
-              // Claude AsyncGenerator path does not use it, so -1 is a sentinel.
-              binding.session_id, binding.directory, -1,
-            )
-            seenPermission = true
-          } else if (event.type === "question") {
-            // AskUserQuestion events are auto-denied in the streaming path so
-            // the generator can continue without user interaction.
-            if (event.requestId != null) {
-              await backend.replyPermission(event.requestId, "deny")
+        try {
+          for await (const event of maybeResult) {
+            if (event.type === "text") {
+              textParts.push(event.text)
+            } else if (event.type === "result") {
+              if (event.sessionId) newSessionId = event.sessionId
+            } else if (event.type === "permission") {
+              await surfacePermission(
+                ctx, event, chatKey, binding, agent, backend,
+                // messageCountBefore is used by the Kilo resumeTurn path; the
+                // Claude AsyncGenerator path does not use it, so -1 is a sentinel.
+                binding.session_id, binding.directory, -1,
+              )
+              seenPermission = true
+            } else if (event.type === "question") {
+              // AskUserQuestion events are auto-denied in the streaming path so
+              // the generator can continue without user interaction.
+              if (event.requestId != null) {
+                await backend.replyPermission(event.requestId, "deny")
+              }
+            } else if (event.type === "error") {
+              await replyChunks(ctx, `${binding.cli} error: ${redactString(event.message)}`)
+              deletePendingPermission(chatKey)
+              return
             }
-          } else if (event.type === "error") {
-            await replyChunks(ctx, `${binding.cli} error: ${redactString(event.message)}`)
-            deletePendingPermission(chatKey)
-            return
           }
+        } catch (streamError) {
+          // If the stream/generator throws after surfacing a permission prompt,
+          // clear the pending state so future turns are not blocked indefinitely.
+          if (seenPermission) {
+            deletePendingPermission(chatKey)
+          }
+          throw streamError
         }
 
         // Compare-and-set: update session ID only when the binding hasn't

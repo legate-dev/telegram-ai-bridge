@@ -63,7 +63,8 @@ export class LmStudioBackend {
    *
    * @param {{ sessionId: string, directory: string, text: string, model?: string }} opts
    */
-  async *sendMessage({ sessionId, text, model }) {
+  async *sendMessage({ sessionId, directory, text, model }) {
+    void directory // LM Studio is HTTP-based — directory is unused but accepted for interface parity
     const configuredModel = model || config.lmstudioModel
     const useModel = configuredModel || await autoDetectModel(config.lmstudioBaseUrl)
 

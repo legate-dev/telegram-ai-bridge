@@ -3,7 +3,7 @@ import { loadAgentRegistry } from "./agent-registry.js"
 import { scanAll, startWatcher } from "./cli-scanner.js"
 import { config } from "./config.js"
 import { KiloClient } from "./kilo-client.js"
-import { KiloBackend, CodexBackend, CopilotBackend, GeminiBackend, ClaudeBackend, registerBackend, detectAvailableClis } from "./backends.js"
+import { KiloBackend, CodexBackend, CopilotBackend, GeminiBackend, ClaudeBackend, LmStudioBackend, registerBackend, detectAvailableClis } from "./backends.js"
 import { authorizedUserId, displayPath } from "./telegram-utils.js"
 import { setupCommands } from "./commands.js"
 import { setupHandlers, clearMessageBuffer, clearPendingPermission, deletePendingCustomPath } from "./message-handler.js"
@@ -214,6 +214,7 @@ async function main() {
   registerBackend(new CopilotBackend())
   registerBackend(new GeminiBackend())
   registerBackend(new ClaudeBackend())
+  registerBackend(new LmStudioBackend())
 
   // Mount routes (must happen before bot.start())
   setupCommands(bot, kilo, agentRegistryPromise)

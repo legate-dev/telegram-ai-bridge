@@ -107,13 +107,6 @@
 - **Fix:** Either (a) apply a minimal per-`ctx.from.id` rate limit inside the bootstrap branch (1 reply per 10s), (b) swap the middleware order and have the rate-limiter run before auth (costs one bucket slot per unauthorized request instead of zero, but closes the gap cleanly), or (c) document the window length and tell users to set `TELEGRAM_ALLOWED_USER_ID` before exposing the bot to Telegram for real
 - **Done when:** Bootstrap mode cannot be used as an amplification vector against Telegram's API
 
-### P2 — LM Studio conversation history grows unbounded
-
-- **Trigger:** `lmstudio_messages` table accumulates all turns for a session with no pruning strategy. Over long sessions this bloats `sessions.db`, slows every turn (full `SELECT` + context window build), and can eventually exceed LM Studio's context limit (typically 8K–128K tokens depending on model).
-- **Blast radius:** Degraded performance and eventually context-overflow errors on long-running sessions. No data loss or security risk.
-- **Fix:** Add configurable history pruning in `getLmStudioMessages` — e.g., keep last N message pairs (`LMSTUDIO_MAX_HISTORY_MESSAGES`, default 20) or last M characters. Apply at read time so existing rows are not deleted (allows the limit to be raised without data loss).
-- **Done when:** Sending 100+ messages to an LM Studio session does not cause context errors and `sessions.db` growth is bounded.
-
 ### P3 — CLI argument spoofing via leading hyphen in user prompt
 
 - **Trigger:** From the pre-public tripartite (Gemini R1, `review/pre-public-v031-security-input-gemini.md`). The vulnerable surface is backends that append the user's prompt as a bare positional argument to `execFile` without a `--` terminator. In the current implementation, **Codex** is the affected case (prompt appended as the last positional arg). Copilot and Gemini pass the prompt as the value to `-p`, and Claude delivers the prompt via stdin (stream-json) — none of those three are described by this issue. A prompt like `--help` or `--version` sent to a Codex session will be parsed by the CLI as a flag instead of prompt payload

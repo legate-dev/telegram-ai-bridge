@@ -74,6 +74,7 @@ const mockConfig = {
   claudeConfigPath: validClaudeConfigPath,
   lmstudioBaseUrl: "http://127.0.0.1:99999",
   lmstudioDetectTimeoutMs: 1000,
+  lmstudioApiToken: "",
 }
 
 await mock.module("../src/config.js", {
@@ -271,15 +272,14 @@ test("getModelsForCli returns array for codex", async () => {
 
 // ── discoverLmStudioModels ────────────────────────────────────────────────────
 
-test("discoverLmStudioModels returns chat models from /v1/models", async (t) => {
+test("discoverLmStudioModels returns LLM models from native /api/v1/models", async (t) => {
   mockFetchImpl = () => Promise.resolve({
     ok: true,
     json: async () => ({
-      data: [
-        { id: "qwen3-0.6b", object: "model" },
-        { id: "llama-3.2-3b", object: "model" },
-        { id: "text-embedding-large", object: "model" },
-        { id: "whisper-large-asr", object: "model" },
+      models: [
+        { key: "qwen3-0.6b", display_name: "Qwen3 0.6B", type: "llm", params_string: "0.6B" },
+        { key: "llama-3.2-3b", display_name: "Llama 3.2", type: "llm", params_string: "3B" },
+        { key: "text-embedding-large", display_name: "Embedding", type: "embedding" },
       ],
     }),
   })
@@ -288,6 +288,8 @@ test("discoverLmStudioModels returns chat models from /v1/models", async (t) => 
   assert.ok(Array.isArray(result))
   assert.equal(result.length, 2)
   assert.equal(result[0].slug, "qwen3-0.6b")
+  assert.ok(result[0].displayName.includes("Qwen3"))
+  assert.ok(result[0].displayName.includes("0.6B"))
   assert.equal(result[1].slug, "llama-3.2-3b")
 })
 
@@ -302,7 +304,7 @@ test("getModelsForCli returns array for lmstudio", async (t) => {
   mockFetchImpl = () => Promise.resolve({
     ok: true,
     json: async () => ({
-      data: [{ id: "qwen3-0.6b", object: "model" }],
+      models: [{ key: "qwen3-0.6b", display_name: "Qwen3", type: "llm" }],
     }),
   })
   t.after(() => { mockFetchImpl = null })

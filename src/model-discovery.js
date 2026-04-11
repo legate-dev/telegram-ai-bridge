@@ -3,20 +3,6 @@ import { config } from "./config.js"
 
 const CLAUDE_STATIC_ALIASES = ["opus", "sonnet", "haiku"]
 
-/**
- * Filter predicate: keep chat-capable models, exclude embeddings/ASR/OCR/rerank.
- * Shared between discoverLmStudioModels (model picker) and autoDetectModel
- * (first-model fallback in lmstudio.js) so the filter stays consistent.
- * @param {{ id: string }} m
- */
-export function isChatModel(m) {
-  return (
-    !m.id.includes("embed") &&
-    !m.id.includes("whisper") &&
-    !m.id.includes("ocr") &&
-    !m.id.includes("rerank")
-  )
-}
 
 export function discoverCodexModels() {
   try {
@@ -56,19 +42,31 @@ export function discoverClaudeModels() {
 }
 
 /**
- * Fetch models available in LM Studio via /v1/models.
- * Returns [] if the server is unreachable or no chat models are loaded.
+ * Fetch models available in LM Studio via native /api/v1/models.
+ * Returns richer data than the OpenAI-compat endpoint: type, display_name,
+ * params_string, loaded status, and size.
+ * Returns [] if the server is unreachable or no LLM models are available.
  */
 export async function discoverLmStudioModels() {
   try {
-    const res = await fetch(`${config.lmstudioBaseUrl}/v1/models`, {
+    const headers = {}
+    if (config.lmstudioApiToken) {
+      headers["Authorization"] = `Bearer ${config.lmstudioApiToken}`
+    }
+    const res = await fetch(`${config.lmstudioBaseUrl}/api/v1/models`, {
       signal: AbortSignal.timeout(config.lmstudioDetectTimeoutMs),
+      headers,
     })
     if (!res.ok) return []
-    const { data } = await res.json()
-    return (data ?? [])
-      .filter(isChatModel)
-      .map((m) => ({ slug: m.id, displayName: m.id }))
+    const { models } = await res.json()
+    return (models ?? [])
+      .filter((m) => m.type === "llm")
+      .map((m) => ({
+        slug: m.key,
+        displayName: m.display_name
+          ? `${m.display_name}${m.params_string ? ` (${m.params_string})` : ""}`
+          : m.key,
+      }))
   } catch {
     return []
   }

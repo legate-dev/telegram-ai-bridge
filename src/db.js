@@ -13,16 +13,16 @@ export function getDb() {
   _db.pragma("busy_timeout = 3000")
 
   _db.exec(`
-    CREATE TABLE IF NOT EXISTS lmstudio_messages (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT    NOT NULL,
-      role       TEXT    NOT NULL,
-      content    TEXT    NOT NULL,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    CREATE TABLE IF NOT EXISTS lmstudio_response_ids (
+      session_id  TEXT PRIMARY KEY,
+      response_id TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_lmstudio_messages_session
-      ON lmstudio_messages (session_id, id);
+    -- Privacy migration: drop legacy conversation-content table from pre-v1 API.
+    -- lmstudio_response_ids stores only an opaque ID, no content.
+    DROP TABLE IF EXISTS lmstudio_messages;
+
+    -- VACUUM runs separately below (once only, gated by sentinel table).
 
     CREATE TABLE IF NOT EXISTS cli_sessions (
       cli                   TEXT NOT NULL,
@@ -52,6 +52,19 @@ export function getDb() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `)
+
+  // Privacy: VACUUM once after the lmstudio_messages migration to reclaim disk space
+  // and ensure freed pages don't retain old conversation content. A sentinel table
+  // prevents re-running on every startup (VACUUM rewrites the entire DB file).
+  const vacuumed = _db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_lmstudio_privacy_vacuumed'"
+  ).get()
+  if (!vacuumed) {
+    try {
+      _db.exec("VACUUM")
+      _db.exec("CREATE TABLE _lmstudio_privacy_vacuumed (done INTEGER)")
+    } catch { /* VACUUM failed (e.g., WAL lock) — sentinel not created, will retry next startup */ }
+  }
 
   // Migrate: add display_name column for existing databases
   const cols = _db.prepare("PRAGMA table_info(cli_sessions)").all()
@@ -331,29 +344,31 @@ export function clearChatBinding(chatId) {
   db.prepare("DELETE FROM chat_bindings WHERE chat_id = ?").run(String(chatId))
 }
 
-// -- lmstudio_messages queries --
+// -- lmstudio_response_ids queries --
+// Stores only an opaque response_id per session for thread continuity.
+// No conversation content is persisted — LM Studio manages history server-side.
 
 /**
- * Returns the full conversation history for an LM Studio session, ordered
- * by insertion time. Used to prepend context to each new request.
+ * Returns the last response_id for an LM Studio session, or null if none.
+ * Used as `previous_response_id` in the next request.
  * @param {string} sessionId
- * @returns {{ role: string, content: string }[]}
+ * @returns {string|null}
  */
-export function getLmStudioMessages(sessionId) {
-  return getDb()
-    .prepare("SELECT role, content FROM lmstudio_messages WHERE session_id = ? ORDER BY id")
-    .all(sessionId)
+export function getLmStudioResponseId(sessionId) {
+  const row = getDb()
+    .prepare("SELECT response_id FROM lmstudio_response_ids WHERE session_id = ?")
+    .get(sessionId)
+  return row?.response_id ?? null
 }
 
 /**
- * Appends a single message to the LM Studio conversation history.
- * Call with role="user" before sending and role="assistant" after receiving.
+ * Stores the latest response_id for an LM Studio session.
+ * Called after each successful turn to enable thread continuity.
  * @param {string} sessionId
- * @param {"user"|"assistant"|"system"} role
- * @param {string} content
+ * @param {string} responseId
  */
-export function appendLmStudioMessage(sessionId, role, content) {
+export function setLmStudioResponseId(sessionId, responseId) {
   getDb()
-    .prepare("INSERT INTO lmstudio_messages (session_id, role, content) VALUES (?, ?, ?)")
-    .run(sessionId, role, content)
+    .prepare("INSERT OR REPLACE INTO lmstudio_response_ids (session_id, response_id) VALUES (?, ?)")
+    .run(sessionId, responseId)
 }

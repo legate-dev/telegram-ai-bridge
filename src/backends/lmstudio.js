@@ -1,43 +1,57 @@
-import { getLmStudioMessages, appendLmStudioMessage } from "../db.js"
+import { getLmStudioResponseId, setLmStudioResponseId } from "../db.js"
 import { config } from "../config.js"
 import { log } from "../log.js"
-import { isChatModel } from "../model-discovery.js"
 
-// ── LM Studio Backend ──
+// ── LM Studio Backend (Native v1 API) ──
 //
-// Connects to a locally running LM Studio server via its OpenAI-compatible
-// REST API (/v1/chat/completions with stream:true).
+// Connects to a locally running LM Studio server via its native REST API
+// (/api/v1/chat with stream:true). This endpoint is stateful — LM Studio
+// manages conversation history server-side and returns a `response_id`
+// that the bridge stores for session continuity via `previous_response_id`.
 //
-// Unlike CLI-based backends, LM Studio is stateless — the OpenAI-compatible
-// endpoint has no built-in thread persistence. The bridge maintains
-// per-session conversation history in SQLite and prepends it to every
-// request so the model has full context.
+// Privacy: the bridge stores ONLY an opaque response_id per session.
+// No conversation content is persisted by the bridge — all history
+// lives in LM Studio's own storage.
 //
 // Config:
 //   LMSTUDIO_BASE_URL          — LM Studio server URL (default http://127.0.0.1:1234)
 //   LMSTUDIO_MODEL             — model identifier to request (default: auto-detect first loaded)
 //   LMSTUDIO_TIMEOUT_MS        — request timeout in ms (default 120000)
-//   LMSTUDIO_MAX_TOKENS        — max tokens per response (default 2048)
-//   LMSTUDIO_DETECT_TIMEOUT_MS — timeout for auto-detect /v1/models probe (default 3000)
+//   LMSTUDIO_MAX_TOKENS        — max output tokens per response (default 2048)
+//   LMSTUDIO_DETECT_TIMEOUT_MS — timeout for /api/v1/models probe (default 3000)
+//   LMSTUDIO_API_TOKEN         — optional Bearer token for authenticated servers
 
 /**
- * Fetch the first non-embedding model from LM Studio's /v1/models endpoint.
- * Returns empty string if the server is unreachable or no models are loaded.
+ * Fetch the first LLM model from LM Studio's native /api/v1/models endpoint.
+ * Returns empty string if the server is unreachable or no models are available.
  * @param {string} baseUrl
  * @returns {Promise<string>}
  */
 async function autoDetectModel(baseUrl) {
   try {
-    const res = await fetch(`${baseUrl}/v1/models`, {
+    const res = await fetch(`${baseUrl}/api/v1/models`, {
       signal: AbortSignal.timeout(config.lmstudioDetectTimeoutMs),
+      headers: authHeaders(),
     })
     if (!res.ok) return ""
-    const { data } = await res.json()
-    const chatModels = (data ?? []).filter(isChatModel)
-    return chatModels[0]?.id ?? ""
+    const { models } = await res.json()
+    const llms = (models ?? []).filter((m) => m.type === "llm")
+    return llms[0]?.key ?? ""
   } catch {
     return ""
   }
+}
+
+/**
+ * Build auth headers if LMSTUDIO_API_TOKEN is configured.
+ * @returns {Record<string, string>}
+ */
+function authHeaders() {
+  const headers = { "Content-Type": "application/json" }
+  if (config.lmstudioApiToken) {
+    headers["Authorization"] = `Bearer ${config.lmstudioApiToken}`
+  }
+  return headers
 }
 
 export class LmStudioBackend {
@@ -49,43 +63,45 @@ export class LmStudioBackend {
   /**
    * Send a message to LM Studio and stream events via AsyncGenerator.
    *
-   * Yields:
-   *   { type: "text",   text: string }
-   *   { type: "result", sessionId: string, inputTokens: number, outputTokens: number }
-   *   { type: "error",  message: string }  — terminal; generator ends after this
-   *
-   * Reasoning-only chunks (reasoning_content without content) are skipped so
-   * Qwen3 / DeepSeek-R1 thinking tokens don't appear in the Telegram reply.
+   * Uses the native /api/v1/chat endpoint with SSE streaming. Events:
+   *   { type: "text",     text: string }                         — message content chunk
+   *   { type: "tool_use", toolName: string, toolInput: string, status: string } — tool call
+   *   { type: "result",   sessionId: string, inputTokens, outputTokens, tokensPerSecond } — turn complete
+   *   { type: "error",    message: string }                      — terminal error
    *
    * @param {{ sessionId: string, directory: string, text: string, model?: string }} opts
    */
   async *sendMessage({ sessionId, directory, text, model }) {
-    void directory // LM Studio is HTTP-based — directory is unused but accepted for interface parity
+    void directory // LM Studio is HTTP-based — unused but accepted for interface parity
+
     const configuredModel = model || config.lmstudioModel
     const useModel = configuredModel || await autoDetectModel(config.lmstudioBaseUrl)
 
-    const history = getLmStudioMessages(sessionId)
-    const messages = [...history, { role: "user", content: text }]
+    // Retrieve the last response_id for this session (enables thread continuity)
+    const previousResponseId = getLmStudioResponseId(sessionId)
 
     log.info("lmstudio.backend", "exec.start", {
       cli: "lmstudio",
       session_id: sessionId,
       model: useModel || "(none loaded)",
       text_length: text.length,
-      history_length: history.length,
+      has_previous_response: !!previousResponseId,
     })
+
+    const body = {
+      model: useModel,
+      input: text,
+      stream: true,
+      max_output_tokens: config.lmstudioMaxTokens,
+    }
+    if (previousResponseId) body.previous_response_id = previousResponseId
 
     let response
     try {
-      response = await fetch(`${config.lmstudioBaseUrl}/v1/chat/completions`, {
+      response = await fetch(`${config.lmstudioBaseUrl}/api/v1/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: useModel,
-          messages,
-          stream: true,
-          max_tokens: config.lmstudioMaxTokens,
-        }),
+        headers: authHeaders(),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(config.lmstudioTimeoutMs),
       })
     } catch (err) {
@@ -104,9 +120,9 @@ export class LmStudioBackend {
     }
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "")
+      const raw = await response.text().catch(() => "")
       let detail = ""
-      try { detail = JSON.parse(body).error?.message ?? "" } catch {}
+      try { detail = JSON.parse(raw).error?.message ?? "" } catch {}
       const msg = detail || `LM Studio error ${response.status}`
       log.warn("lmstudio.backend", "exec.no_result", {
         cli: "lmstudio",
@@ -124,14 +140,19 @@ export class LmStudioBackend {
       return
     }
 
+    // ── SSE stream parsing ──
+    // Native API uses named events: "event: <type>\ndata: <json>\n\n"
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buf = ""
     let fullResponse = ""
+    let responseId = null
     let inputTokens = 0
     let outputTokens = 0
 
     try {
+      let currentEvent = null
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -141,36 +162,120 @@ export class LmStudioBackend {
         buf = lines.pop() ?? ""
 
         for (const line of lines) {
-          if (!line.startsWith("data: ")) continue
-          const payload = line.slice(6).trim()
+          // SSE event type line
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim()
+            continue
+          }
 
-          if (payload === "[DONE]") {
-            if (!fullResponse) {
-              yield { type: "error", message: "LM Studio returned no text content" }
-              return
+          // SSE data line
+          if (line.startsWith("data: ")) {
+            const payload = line.slice(6).trim()
+            if (!payload) continue
+
+            let data
+            try { data = JSON.parse(payload) } catch { continue }
+
+            switch (currentEvent) {
+              case "message.delta":
+                if (data.content) {
+                  fullResponse += data.content
+                  yield { type: "text", text: data.content }
+                }
+                break
+
+              case "tool_call.start":
+                yield {
+                  type: "tool_use",
+                  toolName: data.tool ?? "",
+                  toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
+                  status: "start",
+                }
+                break
+
+              case "tool_call.success":
+                yield {
+                  type: "tool_use",
+                  toolName: data.tool ?? "",
+                  toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
+                  status: "success",
+                  output: data.output,
+                }
+                break
+
+              case "tool_call.failure":
+                yield {
+                  type: "tool_use",
+                  toolName: data.metadata?.tool_name ?? "",
+                  toolInput: data.metadata?.arguments ? JSON.stringify(data.metadata.arguments) : "",
+                  status: "failure",
+                  reason: data.reason,
+                }
+                break
+
+              case "error":
+                // error is terminal for the consumer — yield and stop
+                yield { type: "error", message: data.error?.message ?? "Unknown LM Studio error" }
+                return
+
+              case "chat.end": {
+                const result = data.result ?? data
+                responseId = result.response_id ?? null
+                const stats = result.stats ?? {}
+                inputTokens = stats.input_tokens ?? 0
+                outputTokens = stats.total_output_tokens ?? 0
+
+                // Persist the response_id for session continuity (opaque ID only, no content)
+                if (responseId) {
+                  setLmStudioResponseId(sessionId, responseId)
+                }
+
+                // If streaming produced no text, extract from aggregated output
+                if (!fullResponse && result.output) {
+                  for (const item of result.output) {
+                    if (item.type === "message" && item.content) {
+                      fullResponse += item.content
+                    }
+                  }
+                }
+
+                if (!fullResponse) {
+                  yield { type: "error", message: "LM Studio returned no text content" }
+                  return
+                }
+
+                yield {
+                  type: "result",
+                  sessionId,
+                  inputTokens,
+                  outputTokens,
+                  tokensPerSecond: stats.tokens_per_second ?? null,
+                }
+                return
+              }
+
+              // Informational events — skip silently
+              case "chat.start":
+              case "model_load.start":
+              case "model_load.progress":
+              case "model_load.end":
+              case "prompt_processing.start":
+              case "prompt_processing.progress":
+              case "prompt_processing.end":
+              case "reasoning.start":
+              case "reasoning.delta":
+              case "reasoning.end":
+              case "message.start":
+              case "message.end":
+              case "tool_call.arguments":
+                break
+
+              default:
+                break
             }
-            appendLmStudioMessage(sessionId, "user", text)
-            appendLmStudioMessage(sessionId, "assistant", fullResponse)
-            yield { type: "result", sessionId, inputTokens, outputTokens }
-            return
-          }
 
-          let chunk
-          try { chunk = JSON.parse(payload) } catch { continue }
-
-          // Capture token counts when the server populates usage
-          if (chunk.usage) {
-            inputTokens = chunk.usage.prompt_tokens ?? 0
-            outputTokens = chunk.usage.completion_tokens ?? 0
-          }
-
-          const delta = chunk.choices?.[0]?.delta
-          if (!delta) continue
-
-          // Skip reasoning_content-only chunks (Qwen3 thinking mode, DeepSeek-R1)
-          if (delta.content) {
-            fullResponse += delta.content
-            yield { type: "text", text: delta.content }
+            currentEvent = null
+            continue
           }
         }
       }
@@ -178,19 +283,18 @@ export class LmStudioBackend {
       reader.cancel().catch(() => {})
     }
 
-    // Connection closed without [DONE]
-    if (!fullResponse) {
-      log.warn("lmstudio.backend", "exec.no_result", {
-        cli: "lmstudio",
-        session_id: sessionId,
-        persist: true,
-      })
-      yield { type: "error", message: "LM Studio closed connection without producing a result" }
-    } else {
-      // Partial stream — save what we got
-      appendLmStudioMessage(sessionId, "user", text)
-      appendLmStudioMessage(sessionId, "assistant", fullResponse)
-      yield { type: "result", sessionId, inputTokens, outputTokens }
+    // Stream closed without chat.end — treat as error regardless of accumulated text.
+    // Without chat.end we have no response_id, so continuing would silently reset
+    // the conversation thread (or resume from a stale previous_response_id).
+    log.warn("lmstudio.backend", "exec.no_result", {
+      cli: "lmstudio",
+      session_id: sessionId,
+      had_partial_text: !!fullResponse,
+      persist: true,
+    })
+    yield { type: "error", message: fullResponse
+      ? "LM Studio stream ended without completing — partial response discarded to preserve thread integrity"
+      : "LM Studio closed connection without producing a result"
     }
   }
 

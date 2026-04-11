@@ -113,7 +113,7 @@ Model selection is supported for Claude Code, Codex, and LM Studio backends.
 - Claude and Codex discovery uses local file reads only — no network calls
 - LM Studio discovery requires a network call to the local server (`LMSTUDIO_BASE_URL`); times out gracefully via `LMSTUDIO_DETECT_TIMEOUT_MS`
 - No model validation at selection time — the CLI/server errors if invalid
-- Config paths are overridable via `CODEX_MODELS_CACHE_PATH`, `CLAUDE_CONFIG_PATH`, and `LMSTUDIO_BASE_URL`
+- Config values are overridable via `CODEX_MODELS_CACHE_PATH`, `CLAUDE_CONFIG_PATH`, `LMSTUDIO_BASE_URL`, and `LMSTUDIO_DETECT_TIMEOUT_MS`
 
 ## Kilo transport contract
 

@@ -312,7 +312,10 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
     }
 
     if (!models.length) {
-      await replyChunks(ctx, `No models available for ${cli}. Run ${cli} at least once to populate the models cache.`)
+      const hint = cli === "lmstudio"
+        ? `No models available. Make sure LM Studio is running and at least one model is loaded.`
+        : `No models available for ${cli}. Run ${cli} at least once to populate the models cache.`
+      await replyChunks(ctx, hint)
       return
     }
 

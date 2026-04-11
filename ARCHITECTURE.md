@@ -112,6 +112,17 @@ See DECISION_LOG 2026-04-08 for the full architectural rationale, alternatives c
 - Session resume via `-r <session-id>`
 - Handles quota exhaustion and spawn errors (ENOENT) gracefully
 
+### LM Studio Backend (native v1 API — privacy-first)
+
+- Connects to a locally running LM Studio server via its native REST API `POST /api/v1/chat` with named SSE streaming (requires LM Studio ≥ 0.4.0)
+- **Privacy-first:** conversation history managed entirely by LM Studio server-side. The bridge stores only an opaque `response_id` per session in `lmstudio_response_ids` (one row, no content). A one-time `VACUUM` migration purges any legacy `lmstudio_messages` data on upgrade
+- Stateful chats via `previous_response_id` — thread continuity without replaying history
+- Named SSE events: `message.delta`, `reasoning.delta` (skipped), `tool_call.*`, `model_load.progress`, `prompt_processing.progress`, `chat.end` (yields `response_id` + stats)
+- Auto-detects first LLM model from `GET /api/v1/models` (filtered by `type === "llm"`); model selection via `/models` Telegram command
+- Optional auth via `LMSTUDIO_API_TOKEN` (Bearer token) for authenticated servers
+- MCP passthrough ready via `integrations` field (ephemeral MCP servers + LM Studio plugins)
+- No CLI binary required — HTTP-based like Kilo; always marked as supported, fails gracefully at runtime
+
 ## Components
 
 ### Telegram Bot (grammY)
@@ -214,6 +225,7 @@ All `ALTER TABLE ADD COLUMN` migrations in `src/db.js` must also appear in the c
 | Kilo interface | `kilo serve` HTTP | Persistent, session-aware |
 | CLI interface (exec) | `child_process.execFile` | Codex, Copilot |
 | CLI interface (stream) | `child_process.spawn` + AsyncGenerator | Claude Code, Gemini |
+| CLI interface (HTTP) | Native REST API + SSE | LM Studio (privacy-first: zero content stored) |
 | Config | env vars | Simple, twelve-factor |
 | State | SQLite | Session bindings + scanned CLI sessions (`cli_sessions` table includes `source` for declarative ownership and `kilo_messages_seen_at` for per-row count cache) |
 | Hosting | Always-on machine | Same host as CLI tools |

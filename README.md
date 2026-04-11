@@ -34,6 +34,14 @@ MIT, gift.
 | Stateless — all intelligence lives in the CLI backends | Another LLM wrapper |
 | Privacy-first option via LM Studio — zero cloud, runs on your own hardware | Requiring an API key or subscription |
 
+## Privacy
+
+All backends run on your machine — the bridge is a transport layer, not a hosted service.
+
+**LM Studio** has an additional privacy guarantee: the bridge uses LM Studio's native stateful API (`/api/v1/chat`) which manages conversation history server-side. The bridge stores **only an opaque session reference ID** (no message content, no prompts, no responses). When `LMSTUDIO_BASE_URL` points to localhost (the default), no data leaves your machine at any point.
+
+For all other backends (Claude, Codex, Copilot, Gemini, Kilo), the bridge does not persist conversation content either — it forwards messages to the CLI process and relays the output. Session metadata (IDs, workspace paths, timestamps) is stored in a local SQLite database (`sessions.db`).
+
 ## Why it exists
 
 AI coding CLIs are powerful but desktop-only. When you're away from your machine you lose access to running sessions, project context, and tool integrations you've already configured.

@@ -321,16 +321,17 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
 
     // Telegram limits callback_data to 64 bytes. LM Studio model keys can
     // exceed this (e.g., "dolphin-mistral-glm-4.7-flash-24b-venice-edition-...").
-    // Truncate the slug in callback_data; the handler uses startsWith matching
-    // against the full model list to resolve the complete key.
+    // Use numeric index for LM Studio to avoid truncation ambiguity; the handler
+    // resolves the index back to the full slug via getModelsForCli.
     const MAX_CALLBACK_SLUG = 54 // 64 - len("setmodel:") - 1 byte safety
     const keyboard = new InlineKeyboard()
     const lines = [`Available models for ${cli}:`]
     const displayed = models.slice(0, MAX_MODELS_IN_KEYBOARD)
     for (const [i, m] of displayed.entries()) {
       lines.push(`${i + 1}. ${m.displayName}`)
-      const cbSlug = m.slug.length > MAX_CALLBACK_SLUG ? m.slug.slice(0, MAX_CALLBACK_SLUG) : m.slug
-      keyboard.text(`${i + 1}. ${m.displayName}`, `setmodel:${cbSlug}`).row()
+      const needsIndex = cli === "lmstudio" && m.slug.length > MAX_CALLBACK_SLUG
+      const cbData = needsIndex ? `setmodel:#${i}` : `setmodel:${m.slug}`
+      keyboard.text(`${i + 1}. ${m.displayName}`, cbData).row()
     }
     if (models.length > MAX_MODELS_IN_KEYBOARD) {
       lines.push(`\n…and ${models.length - MAX_MODELS_IN_KEYBOARD} more (showing top ${MAX_MODELS_IN_KEYBOARD} by priority).`)

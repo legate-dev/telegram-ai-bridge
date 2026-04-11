@@ -701,12 +701,18 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           await ctx.answerCallbackQuery({ text: `Model selection is not supported for ${cli}.`, show_alert: true })
           return
         }
-        // Resolve truncated callback slugs (Telegram 64-byte limit) by matching
-        // against the full model list. Falls back to the callback slug as-is.
-        if (cli === "lmstudio") {
+        // Resolve indexed callback slugs (Telegram 64-byte limit workaround).
+        // Long LM Studio model keys use `#<index>` which maps back to the
+        // model list position. Falls back to the callback slug as-is.
+        if (cli === "lmstudio" && slug.startsWith("#")) {
+          const idx = parseInt(slug.slice(1), 10)
           const models = await getModelsForCli("lmstudio")
-          const match = models?.find((m) => m.slug.startsWith(slug))
-          if (match) slug = match.slug
+          if (models && models[idx]) {
+            slug = models[idx].slug
+          } else {
+            await ctx.answerCallbackQuery({ text: "Model list changed — please run /models again.", show_alert: true })
+            return
+          }
         }
         setChatBinding(ctx.chat.id, { ...binding, model: slug })
         log.info("telegram.callback", "model.set", {

@@ -22,9 +22,7 @@ export function getDb() {
     -- lmstudio_response_ids stores only an opaque ID, no content.
     DROP TABLE IF EXISTS lmstudio_messages;
 
-    -- Reclaim disk space and prevent freed pages from retaining old content.
-    -- Only runs meaningfully once (subsequent calls are near-instant on a clean DB).
-    -- Note: VACUUM cannot run inside a transaction, so we execute it separately below.
+    -- VACUUM runs separately below (once only, gated by sentinel table).
 
     CREATE TABLE IF NOT EXISTS cli_sessions (
       cli                   TEXT NOT NULL,
@@ -55,10 +53,16 @@ export function getDb() {
     );
   `)
 
-  // Privacy: reclaim disk space after dropping lmstudio_messages.
-  // VACUUM rewrites the DB file, ensuring freed pages don't retain old content.
-  // Safe to call on every startup — it's a no-op if the DB is already compact.
-  try { _db.exec("VACUUM") } catch { /* ignore if VACUUM fails (e.g., active transactions) */ }
+  // Privacy: VACUUM once after the lmstudio_messages migration to reclaim disk space
+  // and ensure freed pages don't retain old conversation content. A sentinel table
+  // prevents re-running on every startup (VACUUM rewrites the entire DB file).
+  const vacuumed = _db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_lmstudio_privacy_vacuumed'"
+  ).get()
+  if (!vacuumed) {
+    try { _db.exec("VACUUM") } catch { /* ignore if VACUUM fails (e.g., active transactions) */ }
+    _db.exec("CREATE TABLE _lmstudio_privacy_vacuumed (done INTEGER)")
+  }
 
   // Migrate: add display_name column for existing databases
   const cols = _db.prepare("PRAGMA table_info(cli_sessions)").all()

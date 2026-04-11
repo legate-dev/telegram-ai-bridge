@@ -64,10 +64,10 @@ export class LmStudioBackend {
    * Send a message to LM Studio and stream events via AsyncGenerator.
    *
    * Uses the native /api/v1/chat endpoint with SSE streaming. Events:
-   *   { type: "text",   text: string }          — message content chunk
-   *   { type: "tool_use", tool: string, ... }   — tool call notification
-   *   { type: "result", sessionId: string, ... } — turn complete
-   *   { type: "error",  message: string }        — terminal error
+   *   { type: "text",     text: string }                         — message content chunk
+   *   { type: "tool_use", toolName: string, toolInput: string, status: string } — tool call
+   *   { type: "result",   sessionId: string, inputTokens, outputTokens, tokensPerSecond } — turn complete
+   *   { type: "error",    message: string }                      — terminal error
    *
    * @param {{ sessionId: string, directory: string, text: string, model?: string }} opts
    */
@@ -283,16 +283,18 @@ export class LmStudioBackend {
       reader.cancel().catch(() => {})
     }
 
-    // Stream closed without chat.end
-    if (!fullResponse) {
-      log.warn("lmstudio.backend", "exec.no_result", {
-        cli: "lmstudio",
-        session_id: sessionId,
-        persist: true,
-      })
-      yield { type: "error", message: "LM Studio closed connection without producing a result" }
-    } else {
-      yield { type: "result", sessionId, inputTokens, outputTokens }
+    // Stream closed without chat.end — treat as error regardless of accumulated text.
+    // Without chat.end we have no response_id, so continuing would silently reset
+    // the conversation thread (or resume from a stale previous_response_id).
+    log.warn("lmstudio.backend", "exec.no_result", {
+      cli: "lmstudio",
+      session_id: sessionId,
+      had_partial_text: !!fullResponse,
+      persist: true,
+    })
+    yield { type: "error", message: fullResponse
+      ? "LM Studio stream ended without completing — partial response discarded to preserve thread integrity"
+      : "LM Studio closed connection without producing a result"
     }
   }
 

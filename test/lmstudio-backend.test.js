@@ -271,6 +271,28 @@ test("LmStudioBackend yields error when chat.end has no message content", async 
   assert.ok(events.at(-1).message.includes("no text content"))
 })
 
+test("LmStudioBackend yields error when stream ends without chat.end (even with partial text)", async (t) => {
+  resetMocks()
+  t.after(() => { mockFetchImpl = null })
+  mockFetchImpl = () => makeResponse([
+    { event: "chat.start", data: { type: "chat.start", model_instance_id: "test-model" } },
+    { event: "message.delta", data: { type: "message.delta", content: "partial answer" } },
+    // stream ends — no chat.end
+  ])
+
+  const backend = new LmStudioBackend()
+  const events = []
+  for await (const ev of backend.sendMessage({ sessionId: "s_partial", directory: "/tmp", text: "hi" })) {
+    events.push(ev)
+  }
+
+  // Should yield text chunks but end with error (not result) to preserve thread integrity
+  assert.ok(events.some((e) => e.type === "text"))
+  assert.equal(events.at(-1).type, "error")
+  assert.ok(events.at(-1).message.includes("thread integrity"))
+  assert.equal(mockResponseIds["s_partial"], undefined, "no response_id stored on partial stream")
+})
+
 test("LmStudioBackend does not persist response_id on error", async (t) => {
   resetMocks()
   t.after(() => { mockFetchImpl = null })

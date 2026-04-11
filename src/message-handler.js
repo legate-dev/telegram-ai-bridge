@@ -696,7 +696,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           return
         }
         const cli = binding.cli
-        if (cli !== "claude" && cli !== "codex") {
+        if (cli !== "claude" && cli !== "codex" && cli !== "lmstudio") {
           await ctx.answerCallbackQuery({ text: `Model selection is not supported for ${cli}.`, show_alert: true })
           return
         }

@@ -1,4 +1,4 @@
-import { mock, test } from "node:test"
+import { mock, test, after } from "node:test"
 import assert from "node:assert/strict"
 import { writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
@@ -72,13 +72,24 @@ const missingPath = join(tmpDir, "does-not-exist.json")
 const mockConfig = {
   codexModelsCachePath: validCodexCachePath,
   claudeConfigPath: validClaudeConfigPath,
+  lmstudioBaseUrl: "http://127.0.0.1:99999",
+  lmstudioDetectTimeoutMs: 1000,
 }
 
 await mock.module("../src/config.js", {
   namedExports: { config: mockConfig },
 })
 
-const { discoverCodexModels, discoverClaudeModels, getModelsForCli } = await import("../src/model-discovery.js")
+const { discoverCodexModels, discoverClaudeModels, discoverLmStudioModels, getModelsForCli } = await import("../src/model-discovery.js")
+
+// ── Fetch mock for LM Studio tests ──
+let mockFetchImpl = null
+const originalFetch = global.fetch
+global.fetch = (...args) => {
+  if (mockFetchImpl) return mockFetchImpl(...args)
+  return originalFetch(...args)
+}
+after(() => { global.fetch = originalFetch })
 
 // ── discoverCodexModels — happy path ──────────────────────────────────────────
 
@@ -224,25 +235,25 @@ test("discoverClaudeModels returns only static aliases when config file contains
 
 // ── getModelsForCli — router ──────────────────────────────────────────────────
 
-test("getModelsForCli returns null for kilo", () => {
-  assert.equal(getModelsForCli("kilo"), null)
+test("getModelsForCli returns null for kilo", async () => {
+  assert.equal(await getModelsForCli("kilo"), null)
 })
 
-test("getModelsForCli returns null for copilot", () => {
-  assert.equal(getModelsForCli("copilot"), null)
+test("getModelsForCli returns null for copilot", async () => {
+  assert.equal(await getModelsForCli("copilot"), null)
 })
 
-test("getModelsForCli returns null for gemini", () => {
-  assert.equal(getModelsForCli("gemini"), null)
+test("getModelsForCli returns null for gemini", async () => {
+  assert.equal(await getModelsForCli("gemini"), null)
 })
 
-test("getModelsForCli returns null for unknown CLI", () => {
-  assert.equal(getModelsForCli("qwen"), null)
+test("getModelsForCli returns null for unknown CLI", async () => {
+  assert.equal(await getModelsForCli("qwen"), null)
 })
 
-test("getModelsForCli returns array for claude with at least static aliases", () => {
+test("getModelsForCli returns array for claude with at least static aliases", async () => {
   mockConfig.claudeConfigPath = validClaudeConfigPath
-  const result = getModelsForCli("claude")
+  const result = await getModelsForCli("claude")
   assert.ok(Array.isArray(result))
   assert.ok(result.length >= 3)
   const slugs = result.map((m) => m.slug)
@@ -251,9 +262,52 @@ test("getModelsForCli returns array for claude with at least static aliases", ()
   assert.ok(slugs.includes("haiku"))
 })
 
-test("getModelsForCli returns array for codex", () => {
+test("getModelsForCli returns array for codex", async () => {
   mockConfig.codexModelsCachePath = validCodexCachePath
-  const result = getModelsForCli("codex")
+  const result = await getModelsForCli("codex")
   assert.ok(Array.isArray(result))
   assert.ok(result.length > 0)
+})
+
+// ── discoverLmStudioModels ────────────────────────────────────────────────────
+
+test("discoverLmStudioModels returns chat models from /v1/models", async (t) => {
+  mockFetchImpl = () => Promise.resolve({
+    ok: true,
+    json: async () => ({
+      data: [
+        { id: "qwen3-0.6b", object: "model" },
+        { id: "llama-3.2-3b", object: "model" },
+        { id: "text-embedding-large", object: "model" },
+        { id: "whisper-large-asr", object: "model" },
+      ],
+    }),
+  })
+  t.after(() => { mockFetchImpl = null })
+  const result = await discoverLmStudioModels()
+  assert.ok(Array.isArray(result))
+  assert.equal(result.length, 2)
+  assert.equal(result[0].slug, "qwen3-0.6b")
+  assert.equal(result[1].slug, "llama-3.2-3b")
+})
+
+test("discoverLmStudioModels returns [] when server is unreachable", async (t) => {
+  mockFetchImpl = () => Promise.reject(new Error("ECONNREFUSED"))
+  t.after(() => { mockFetchImpl = null })
+  const result = await discoverLmStudioModels()
+  assert.deepEqual(result, [])
+})
+
+test("getModelsForCli returns array for lmstudio", async (t) => {
+  mockFetchImpl = () => Promise.resolve({
+    ok: true,
+    json: async () => ({
+      data: [{ id: "qwen3-0.6b", object: "model" }],
+    }),
+  })
+  t.after(() => { mockFetchImpl = null })
+  const result = await getModelsForCli("lmstudio")
+  assert.ok(Array.isArray(result))
+  assert.equal(result.length, 1)
+  assert.equal(result[0].slug, "qwen3-0.6b")
 })

@@ -3,6 +3,21 @@ import { config } from "./config.js"
 
 const CLAUDE_STATIC_ALIASES = ["opus", "sonnet", "haiku"]
 
+/**
+ * Filter predicate: keep chat-capable models, exclude embeddings/ASR/OCR/rerank.
+ * Shared between discoverLmStudioModels (model picker) and autoDetectModel
+ * (first-model fallback in lmstudio.js) so the filter stays consistent.
+ * @param {{ id: string }} m
+ */
+export function isChatModel(m) {
+  return (
+    !m.id.includes("embed") &&
+    !m.id.includes("whisper") &&
+    !m.id.includes("ocr") &&
+    !m.id.includes("rerank")
+  )
+}
+
 export function discoverCodexModels() {
   try {
     const raw = readFileSync(config.codexModelsCachePath, "utf8")
@@ -40,10 +55,30 @@ export function discoverClaudeModels() {
   }
 }
 
+/**
+ * Fetch models available in LM Studio via /v1/models.
+ * Returns [] if the server is unreachable or no chat models are loaded.
+ */
+export async function discoverLmStudioModels() {
+  try {
+    const res = await fetch(`${config.lmstudioBaseUrl}/v1/models`, {
+      signal: AbortSignal.timeout(config.lmstudioDetectTimeoutMs),
+    })
+    if (!res.ok) return []
+    const { data } = await res.json()
+    return (data ?? [])
+      .filter(isChatModel)
+      .map((m) => ({ slug: m.id, displayName: m.id }))
+  } catch {
+    return []
+  }
+}
+
 // Returns [{ slug, displayName }] for CLIs that support model selection,
-// or null for CLIs that do not.
-export function getModelsForCli(cliName) {
+// or null for CLIs that do not. Async because LM Studio discovery uses fetch.
+export async function getModelsForCli(cliName) {
   if (cliName === "codex") return discoverCodexModels()
   if (cliName === "claude") return discoverClaudeModels()
+  if (cliName === "lmstudio") return discoverLmStudioModels()
   return null
 }

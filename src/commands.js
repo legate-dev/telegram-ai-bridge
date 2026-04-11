@@ -30,7 +30,7 @@ function supportsAgentSelection(binding) {
 
 function supportsModelSelection(binding) {
   const cli = binding?.cli
-  return cli === "claude" || cli === "codex"
+  return cli === "claude" || cli === "codex" || cli === "lmstudio"
 }
 
 // For Kilo, cli_sessions.message_count holds the exact user-turn count
@@ -305,14 +305,17 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
       return
     }
 
-    const models = getModelsForCli(cli)
+    const models = await getModelsForCli(cli)
     if (!models) {
       await replyChunks(ctx, `Model selection is not supported for ${cli}.`)
       return
     }
 
     if (!models.length) {
-      await replyChunks(ctx, `No models available for ${cli}. Run ${cli} at least once to populate the models cache.`)
+      const hint = cli === "lmstudio"
+        ? `No models available. Make sure LM Studio is running and at least one model is loaded.`
+        : `No models available for ${cli}. Run ${cli} at least once to populate the models cache.`
+      await replyChunks(ctx, hint)
       return
     }
 

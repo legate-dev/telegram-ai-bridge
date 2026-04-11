@@ -1,6 +1,7 @@
 import { getLmStudioMessages, appendLmStudioMessage } from "../db.js"
 import { config } from "../config.js"
 import { log } from "../log.js"
+import { isChatModel } from "../model-discovery.js"
 
 // ── LM Studio Backend ──
 //
@@ -32,13 +33,7 @@ async function autoDetectModel(baseUrl) {
     })
     if (!res.ok) return ""
     const { data } = await res.json()
-    const chatModels = (data ?? []).filter(
-      (m) =>
-        !m.id.includes("embed") &&
-        !m.id.includes("whisper") &&
-        !m.id.includes("ocr") &&
-        !m.id.includes("rerank"),
-    )
+    const chatModels = (data ?? []).filter(isChatModel)
     return chatModels[0]?.id ?? ""
   } catch {
     return ""

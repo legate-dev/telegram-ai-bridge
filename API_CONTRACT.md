@@ -68,8 +68,8 @@ Called by the `perm:` callback to write a `control_response` to the backend's st
 | `/new` | `[cli] [path]` | Creates a new backend session; picker shown if CLI omitted and multiple are available |
 | `/agents` | none | Lists available Kilo agents only |
 | `/agent` | `<name>` | Sets preferred Kilo agent for this chat |
-| `/models` | none | Lists available models for current CLI (Claude/Codex inline keyboard; redirects for Kilo; unsupported for others) |
-| `/model` | `<name>` | Sets model for current session (Claude/Codex only) |
+| `/models` | none | Lists available models for current CLI (Claude/Codex/LM Studio inline keyboard; redirects for Kilo; unsupported for others) |
+| `/model` | `<name>` | Sets model for current session (Claude/Codex/LM Studio) |
 | `/status` | none | Shows current binding; session label resolves as `display_name → title → truncated session_id` (works for all CLIs) |
 | `/abort` | none | Aborts the current bound session if backend supports it |
 | `/cleanup` | none or `confirm` | Previews bridge-created Kilo sessions to delete; only `confirm` performs deletion. Bridge ownership is determined by the deterministic `source='bridge'` flag set at session creation, NOT by title pattern. Sessions with more user turns than `KILO_CLEANUP_MAX_ROUNDS` are protected. The handler triggers a fresh `scanAll()` so preview and confirm always see the same state. |
@@ -98,20 +98,22 @@ updated_at TEXT NOT NULL
 
 ## Model selection contract
 
-Model selection is supported for Claude Code and Codex backends only.
+Model selection is supported for Claude Code, Codex, and LM Studio backends.
 
 | CLI | Discovery source | Flag |
 |-----|-----------------|------|
 | `claude` | Static aliases (`opus`, `sonnet`, `haiku`) + `projects.*.lastModelUsage` keys from `~/.claude.json` | `--model <name>` |
 | `codex` | `~/.codex/models_cache.json` filtered by `visibility === "list"`, sorted by `priority` | `-m <slug>` |
+| `lmstudio` | `GET /v1/models` on LM Studio server, filtered to chat models (excludes embedding/ASR/OCR/rerank) | `model` field in POST body |
 | `kilo` | N/A — use `/agents` | — |
 | `copilot`, `gemini` | Not supported | — |
 
 ### Design constraints
 
-- No network calls for model discovery — all reads are local file reads
-- No model validation at selection time — the CLI errors if invalid
-- Config paths are overridable via `CODEX_MODELS_CACHE_PATH` and `CLAUDE_CONFIG_PATH`
+- Claude and Codex discovery uses local file reads only — no network calls
+- LM Studio discovery requires a network call to the local server (`LMSTUDIO_BASE_URL`); times out gracefully via `LMSTUDIO_DETECT_TIMEOUT_MS`
+- No model validation at selection time — the CLI/server errors if invalid
+- Config values are overridable via `CODEX_MODELS_CACHE_PATH`, `CLAUDE_CONFIG_PATH`, `LMSTUDIO_BASE_URL`, and `LMSTUDIO_DETECT_TIMEOUT_MS`
 
 ## Kilo transport contract
 

@@ -271,7 +271,7 @@ test("getModelsForCli returns array for codex", async () => {
 
 // ── discoverLmStudioModels ────────────────────────────────────────────────────
 
-test("discoverLmStudioModels returns chat models from /v1/models", async () => {
+test("discoverLmStudioModels returns chat models from /v1/models", async (t) => {
   mockFetchImpl = () => Promise.resolve({
     ok: true,
     json: async () => ({
@@ -283,31 +283,31 @@ test("discoverLmStudioModels returns chat models from /v1/models", async () => {
       ],
     }),
   })
+  t.after(() => { mockFetchImpl = null })
   const result = await discoverLmStudioModels()
   assert.ok(Array.isArray(result))
   assert.equal(result.length, 2)
   assert.equal(result[0].slug, "qwen3-0.6b")
   assert.equal(result[1].slug, "llama-3.2-3b")
-  mockFetchImpl = null
 })
 
-test("discoverLmStudioModels returns [] when server is unreachable", async () => {
+test("discoverLmStudioModels returns [] when server is unreachable", async (t) => {
   mockFetchImpl = () => Promise.reject(new Error("ECONNREFUSED"))
+  t.after(() => { mockFetchImpl = null })
   const result = await discoverLmStudioModels()
   assert.deepEqual(result, [])
-  mockFetchImpl = null
 })
 
-test("getModelsForCli returns array for lmstudio", async () => {
+test("getModelsForCli returns array for lmstudio", async (t) => {
   mockFetchImpl = () => Promise.resolve({
     ok: true,
     json: async () => ({
       data: [{ id: "qwen3-0.6b", object: "model" }],
     }),
   })
+  t.after(() => { mockFetchImpl = null })
   const result = await getModelsForCli("lmstudio")
   assert.ok(Array.isArray(result))
   assert.equal(result.length, 1)
   assert.equal(result[0].slug, "qwen3-0.6b")
-  mockFetchImpl = null
 })

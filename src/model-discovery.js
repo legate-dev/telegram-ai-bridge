@@ -5,9 +5,11 @@ const CLAUDE_STATIC_ALIASES = ["opus", "sonnet", "haiku"]
 
 /**
  * Filter predicate: keep chat-capable models, exclude embeddings/ASR/OCR/rerank.
+ * Shared between discoverLmStudioModels (model picker) and autoDetectModel
+ * (first-model fallback in lmstudio.js) so the filter stays consistent.
  * @param {{ id: string }} m
  */
-function isChatModel(m) {
+export function isChatModel(m) {
   return (
     !m.id.includes("embed") &&
     !m.id.includes("whisper") &&

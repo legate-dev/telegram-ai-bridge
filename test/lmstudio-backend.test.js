@@ -314,7 +314,10 @@ test("LmStudioBackend yields tool_use events for tool calls", async (t) => {
   const toolEvents = events.filter((e) => e.type === "tool_use")
   assert.equal(toolEvents.length, 2)
   assert.equal(toolEvents[0].status, "start")
+  assert.equal(toolEvents[0].toolName, "web_search")
+  assert.equal(typeof toolEvents[0].toolInput, "string")
   assert.equal(toolEvents[1].status, "success")
+  assert.equal(toolEvents[1].toolName, "web_search")
   assert.equal(toolEvents[1].output, "result data")
 })
 

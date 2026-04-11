@@ -104,7 +104,7 @@ Model selection is supported for Claude Code, Codex, and LM Studio backends.
 |-----|-----------------|------|
 | `claude` | Static aliases (`opus`, `sonnet`, `haiku`) + `projects.*.lastModelUsage` keys from `~/.claude.json` | `--model <name>` |
 | `codex` | `~/.codex/models_cache.json` filtered by `visibility === "list"`, sorted by `priority` | `-m <slug>` |
-| `lmstudio` | `GET /v1/models` on LM Studio server, filtered to chat models (excludes embedding/ASR/OCR/rerank) | `model` field in POST body |
+| `lmstudio` | `GET /api/v1/models` (native endpoint), filtered by `type === "llm"`; optional `Authorization: Bearer` via `LMSTUDIO_API_TOKEN` | `model` field in POST body |
 | `kilo` | N/A — use `/agents` | — |
 | `copilot`, `gemini` | Not supported | — |
 
@@ -113,7 +113,7 @@ Model selection is supported for Claude Code, Codex, and LM Studio backends.
 - Claude and Codex discovery uses local file reads only — no network calls
 - LM Studio discovery requires a network call to the local server (`LMSTUDIO_BASE_URL`); times out gracefully via `LMSTUDIO_DETECT_TIMEOUT_MS`
 - No model validation at selection time — the CLI/server errors if invalid
-- Config values are overridable via `CODEX_MODELS_CACHE_PATH`, `CLAUDE_CONFIG_PATH`, `LMSTUDIO_BASE_URL`, and `LMSTUDIO_DETECT_TIMEOUT_MS`
+- Config values are overridable via `CODEX_MODELS_CACHE_PATH`, `CLAUDE_CONFIG_PATH`, `LMSTUDIO_BASE_URL`, `LMSTUDIO_DETECT_TIMEOUT_MS`, and `LMSTUDIO_API_TOKEN`
 
 ## Kilo transport contract
 

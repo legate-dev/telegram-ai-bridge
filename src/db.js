@@ -18,6 +18,10 @@ export function getDb() {
       response_id TEXT NOT NULL
     );
 
+    -- Privacy migration: drop legacy conversation-content table from pre-v1 API.
+    -- lmstudio_response_ids stores only an opaque ID, no content.
+    DROP TABLE IF EXISTS lmstudio_messages;
+
     CREATE TABLE IF NOT EXISTS cli_sessions (
       cli                   TEXT NOT NULL,
       session_id            TEXT NOT NULL,
@@ -324,8 +328,6 @@ export function clearChatBinding(chatId) {
   const db = getDb()
   db.prepare("DELETE FROM chat_bindings WHERE chat_id = ?").run(String(chatId))
 }
-
-// -- lmstudio_messages queries --
 
 // -- lmstudio_response_ids queries --
 // Stores only an opaque response_id per session for thread continuity.

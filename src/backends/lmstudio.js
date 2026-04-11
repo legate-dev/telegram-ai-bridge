@@ -185,21 +185,38 @@ export class LmStudioBackend {
                 break
 
               case "tool_call.start":
-                yield { type: "tool_use", tool: data.tool, status: "start" }
+                yield {
+                  type: "tool_use",
+                  toolName: data.tool ?? "",
+                  toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
+                  status: "start",
+                }
                 break
 
               case "tool_call.success":
-                yield { type: "tool_use", tool: data.tool, status: "success", output: data.output }
+                yield {
+                  type: "tool_use",
+                  toolName: data.tool ?? "",
+                  toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
+                  status: "success",
+                  output: data.output,
+                }
                 break
 
               case "tool_call.failure":
-                yield { type: "tool_use", tool: data.metadata?.tool_name, status: "failure", reason: data.reason }
+                yield {
+                  type: "tool_use",
+                  toolName: data.metadata?.tool_name ?? "",
+                  toolInput: data.metadata?.arguments ? JSON.stringify(data.metadata.arguments) : "",
+                  status: "failure",
+                  reason: data.reason,
+                }
                 break
 
               case "error":
+                // error is terminal for the consumer — yield and stop
                 yield { type: "error", message: data.error?.message ?? "Unknown LM Studio error" }
-                // Don't return — chat.end will still arrive with partial results
-                break
+                return
 
               case "chat.end": {
                 const result = data.result ?? data

@@ -120,7 +120,7 @@ See DECISION_LOG 2026-04-08 for the full architectural rationale, alternatives c
 - Named SSE events: `message.delta`, `reasoning.delta` (skipped), `tool_call.*`, `model_load.progress`, `prompt_processing.progress`, `chat.end` (yields `response_id` + stats)
 - Auto-detects first LLM model from `GET /api/v1/models` (filtered by `type === "llm"`); model selection via `/models` Telegram command
 - Optional auth via `LMSTUDIO_API_TOKEN` (Bearer token) for authenticated servers
-- MCP passthrough ready via `integrations` field (ephemeral MCP servers + LM Studio plugins)
+- Bridge does not currently send an `integrations` field or add MCP-specific wiring; any integrations are limited to whatever LM Studio itself is configured to handle internally (future passthrough support is possible)
 - No CLI binary required — HTTP-based like Kilo; always marked as supported, fails gracefully at runtime
 
 ## Components

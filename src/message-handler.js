@@ -4,6 +4,7 @@ import { getChatBinding, setChatBinding, getCliSessionById } from "./db.js"
 import { config } from "./config.js"
 import { checkRateLimit } from "./rate-limit.js"
 import { getBackend, supportedClis } from "./backends.js"
+import { getModelsForCli } from "./model-discovery.js"
 import { createNewSession } from "./commands.js"
 import { log, redactString } from "./log.js"
 import { readLastTurn } from "./last-turn.js"
@@ -689,7 +690,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
     if (!data.startsWith("bind:")) {
       if (data.startsWith("setmodel:")) {
         const [, ...slugParts] = data.split(":")
-        const slug = slugParts.join(":")
+        let slug = slugParts.join(":")
         const binding = getChatBinding(ctx.chat.id)
         if (!binding) {
           await ctx.answerCallbackQuery({ text: "No session bound.", show_alert: true })
@@ -699,6 +700,13 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         if (cli !== "claude" && cli !== "codex" && cli !== "lmstudio") {
           await ctx.answerCallbackQuery({ text: `Model selection is not supported for ${cli}.`, show_alert: true })
           return
+        }
+        // Resolve truncated callback slugs (Telegram 64-byte limit) by matching
+        // against the full model list. Falls back to the callback slug as-is.
+        if (cli === "lmstudio") {
+          const models = await getModelsForCli("lmstudio")
+          const match = models?.find((m) => m.slug.startsWith(slug))
+          if (match) slug = match.slug
         }
         setChatBinding(ctx.chat.id, { ...binding, model: slug })
         log.info("telegram.callback", "model.set", {

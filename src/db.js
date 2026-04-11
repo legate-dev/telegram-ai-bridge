@@ -60,8 +60,10 @@ export function getDb() {
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_lmstudio_privacy_vacuumed'"
   ).get()
   if (!vacuumed) {
-    try { _db.exec("VACUUM") } catch { /* ignore if VACUUM fails (e.g., active transactions) */ }
-    _db.exec("CREATE TABLE _lmstudio_privacy_vacuumed (done INTEGER)")
+    try {
+      _db.exec("VACUUM")
+      _db.exec("CREATE TABLE _lmstudio_privacy_vacuumed (done INTEGER)")
+    } catch { /* VACUUM failed (e.g., WAL lock) — sentinel not created, will retry next startup */ }
   }
 
   // Migrate: add display_name column for existing databases

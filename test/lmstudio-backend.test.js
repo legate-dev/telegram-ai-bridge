@@ -6,15 +6,14 @@ process.env.LOG_LEVEL ??= "error"
 
 // ── Mock state ──
 
-const mockHistory = []
-const appendedMessages = []
+const mockResponseIds = {}
 let mockFetchImpl = null
 
 await mock.module("../src/db.js", {
   namedExports: {
     sessionCountsByCli: () => [],
-    getLmStudioMessages: () => [...mockHistory],
-    appendLmStudioMessage: (sid, role, content) => appendedMessages.push({ sid, role, content }),
+    getLmStudioResponseId: (sid) => mockResponseIds[sid] ?? null,
+    setLmStudioResponseId: (sid, rid) => { mockResponseIds[sid] = rid },
   },
 })
 
@@ -32,6 +31,8 @@ await mock.module("../src/config.js", {
       lmstudioModel: "test-model",
       lmstudioTimeoutMs: 5000,
       lmstudioMaxTokens: 512,
+      lmstudioDetectTimeoutMs: 1000,
+      lmstudioApiToken: "",
     },
   },
 })
@@ -49,23 +50,30 @@ const { LmStudioBackend } = await import("../src/backends.js")
 // ── Helpers ──
 
 function resetMocks() {
-  mockHistory.length = 0
-  appendedMessages.length = 0
+  for (const k of Object.keys(mockResponseIds)) delete mockResponseIds[k]
   mockFetchImpl = null
 }
 
 /**
- * Build a fake SSE ReadableStream from an array of SSE lines.
- * Each string is sent as a complete line followed by "\n".
+ * Build a fake SSE stream from named events.
+ * Each entry is { event: "type", data: object|string }.
  */
-function makeStream(lines) {
+function makeSSEStream(events) {
   const encoder = new TextEncoder()
-  const chunks = lines.map((l) => encoder.encode(l + "\n"))
-  let i = 0
+  const lines = []
+  for (const ev of events) {
+    lines.push(`event: ${ev.event}`)
+    const payload = typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data)
+    lines.push(`data: ${payload}`)
+    lines.push("") // blank line separates events
+  }
+  const chunk = encoder.encode(lines.join("\n") + "\n")
+  let sent = false
   return new ReadableStream({
     pull(controller) {
-      if (i < chunks.length) {
-        controller.enqueue(chunks[i++])
+      if (!sent) {
+        controller.enqueue(chunk)
+        sent = true
       } else {
         controller.close()
       }
@@ -73,24 +81,32 @@ function makeStream(lines) {
   })
 }
 
-function makeResponse(lines, status = 200) {
+function makeResponse(events, status = 200) {
   return {
     ok: status >= 200 && status < 300,
     status,
-    body: makeStream(lines),
-    text: async () => lines.join("\n"),
-    json: async () => JSON.parse(lines.join("")),
+    body: makeSSEStream(events),
+    text: async () => "",
   }
 }
 
 // ── Tests ──
 
-test("LmStudioBackend yields text chunks and result on successful stream", async () => {
+test("LmStudioBackend yields text chunks and result on successful stream", async (t) => {
   resetMocks()
+  t.after(() => { mockFetchImpl = null })
   mockFetchImpl = () => makeResponse([
-    `data: {"choices":[{"delta":{"content":"Hello"}}]}`,
-    `data: {"choices":[{"delta":{"content":" world"}}]}`,
-    `data: [DONE]`,
+    { event: "chat.start", data: { type: "chat.start", model_instance_id: "test-model" } },
+    { event: "message.start", data: { type: "message.start" } },
+    { event: "message.delta", data: { type: "message.delta", content: "Hello" } },
+    { event: "message.delta", data: { type: "message.delta", content: " world" } },
+    { event: "message.end", data: { type: "message.end" } },
+    { event: "chat.end", data: { type: "chat.end", result: {
+      model_instance_id: "test-model",
+      output: [{ type: "message", content: "Hello world" }],
+      stats: { input_tokens: 10, total_output_tokens: 5, tokens_per_second: 42 },
+      response_id: "resp_abc123",
+    }}},
   ])
 
   const backend = new LmStudioBackend()
@@ -101,73 +117,92 @@ test("LmStudioBackend yields text chunks and result on successful stream", async
 
   const texts = events.filter((e) => e.type === "text").map((e) => e.text)
   assert.deepEqual(texts, ["Hello", " world"])
-  assert.equal(events.at(-1).type, "result")
-  assert.equal(events.at(-1).sessionId, "s1")
+  const result = events.find((e) => e.type === "result")
+  assert.equal(result.sessionId, "s1")
+  assert.equal(result.inputTokens, 10)
+  assert.equal(result.outputTokens, 5)
+  assert.equal(result.tokensPerSecond, 42)
 })
 
-test("LmStudioBackend persists user + assistant messages to DB on success", async () => {
+test("LmStudioBackend stores response_id for session continuity", async (t) => {
   resetMocks()
+  t.after(() => { mockFetchImpl = null })
   mockFetchImpl = () => makeResponse([
-    `data: {"choices":[{"delta":{"content":"Hi there"}}]}`,
-    `data: [DONE]`,
+    { event: "chat.start", data: { type: "chat.start", model_instance_id: "test-model" } },
+    { event: "message.delta", data: { type: "message.delta", content: "ok" } },
+    { event: "chat.end", data: { type: "chat.end", result: {
+      output: [{ type: "message", content: "ok" }],
+      stats: { input_tokens: 1, total_output_tokens: 1 },
+      response_id: "resp_xyz789",
+    }}},
   ])
 
   const backend = new LmStudioBackend()
-  for await (const _ of backend.sendMessage({ sessionId: "s2", directory: "/tmp", text: "hello" })) {}
+  for await (const _ of backend.sendMessage({ sessionId: "s2", directory: "/tmp", text: "hi" })) {}
 
-  const user = appendedMessages.find((m) => m.role === "user")
-  const assistant = appendedMessages.find((m) => m.role === "assistant")
-  assert.ok(user, "user message should be persisted")
-  assert.equal(user.content, "hello")
-  assert.ok(assistant, "assistant message should be persisted")
-  assert.equal(assistant.content, "Hi there")
+  assert.equal(mockResponseIds["s2"], "resp_xyz789")
 })
 
-test("LmStudioBackend includes history in request body", async () => {
+test("LmStudioBackend passes previous_response_id when resuming", async (t) => {
   resetMocks()
-  mockHistory.push({ role: "user", content: "previous" })
-  mockHistory.push({ role: "assistant", content: "response" })
+  mockResponseIds["s3"] = "resp_previous123"
+  t.after(() => { mockFetchImpl = null })
 
   let capturedBody = null
   mockFetchImpl = (url, opts) => {
     capturedBody = JSON.parse(opts.body)
-    return makeResponse([`data: {"choices":[{"delta":{"content":"ok"}}]}`, `data: [DONE]`])
+    return makeResponse([
+      { event: "chat.start", data: { type: "chat.start", model_instance_id: "test-model" } },
+      { event: "message.delta", data: { type: "message.delta", content: "resumed" } },
+      { event: "chat.end", data: { type: "chat.end", result: {
+        output: [{ type: "message", content: "resumed" }],
+        stats: {},
+        response_id: "resp_new456",
+      }}},
+    ])
   }
 
   const backend = new LmStudioBackend()
-  for await (const _ of backend.sendMessage({ sessionId: "s3", directory: "/tmp", text: "new" })) {}
+  for await (const _ of backend.sendMessage({ sessionId: "s3", directory: "/tmp", text: "continue" })) {}
 
-  assert.equal(capturedBody.messages.length, 3)
-  assert.equal(capturedBody.messages[0].role, "user")
-  assert.equal(capturedBody.messages[0].content, "previous")
-  assert.equal(capturedBody.messages[2].content, "new")
+  assert.equal(capturedBody.previous_response_id, "resp_previous123")
+  assert.equal(capturedBody.input, "continue")
+  assert.equal(mockResponseIds["s3"], "resp_new456")
 })
 
-test("LmStudioBackend skips reasoning_content-only chunks", async () => {
+test("LmStudioBackend skips reasoning events", async (t) => {
   resetMocks()
+  t.after(() => { mockFetchImpl = null })
   mockFetchImpl = () => makeResponse([
-    `data: {"choices":[{"delta":{"reasoning_content":"thinking..."}}]}`,
-    `data: {"choices":[{"delta":{"reasoning_content":"more thinking"}}]}`,
-    `data: {"choices":[{"delta":{"content":"final answer"}}]}`,
-    `data: [DONE]`,
+    { event: "chat.start", data: { type: "chat.start", model_instance_id: "test-model" } },
+    { event: "reasoning.start", data: { type: "reasoning.start" } },
+    { event: "reasoning.delta", data: { type: "reasoning.delta", content: "thinking..." } },
+    { event: "reasoning.end", data: { type: "reasoning.end" } },
+    { event: "message.delta", data: { type: "message.delta", content: "final answer" } },
+    { event: "chat.end", data: { type: "chat.end", result: {
+      output: [{ type: "reasoning", content: "thinking..." }, { type: "message", content: "final answer" }],
+      stats: {},
+      response_id: "resp_r1",
+    }}},
   ])
 
   const backend = new LmStudioBackend()
   const events = []
-  for await (const ev of backend.sendMessage({ sessionId: "s4", directory: "/tmp", text: "hi" })) {
+  for await (const ev of backend.sendMessage({ sessionId: "s4", directory: "/tmp", text: "think" })) {
     events.push(ev)
   }
 
   const texts = events.filter((e) => e.type === "text").map((e) => e.text)
-  assert.deepEqual(texts, ["final answer"], "reasoning chunks should be filtered out")
+  assert.deepEqual(texts, ["final answer"], "reasoning events should not produce text yields")
 })
 
-test("LmStudioBackend yields error on non-200 response", async () => {
+test("LmStudioBackend yields error on non-200 response", async (t) => {
   resetMocks()
+  t.after(() => { mockFetchImpl = null })
   mockFetchImpl = () => ({
     ok: false,
     status: 503,
-    body: makeStream([]),
+    body: makeSSEStream([]),
     text: async () => JSON.stringify({ error: { message: "No models loaded" } }),
   })
 
@@ -182,41 +217,9 @@ test("LmStudioBackend yields error on non-200 response", async () => {
   assert.ok(events[0].message.includes("No models loaded"))
 })
 
-test("LmStudioBackend yields error on null response body", async () => {
+test("LmStudioBackend yields error when fetch throws (unreachable)", async (t) => {
   resetMocks()
-  mockFetchImpl = () => ({ ok: true, status: 200, body: null })
-
-  const backend = new LmStudioBackend()
-  const events = []
-  for await (const ev of backend.sendMessage({ sessionId: "s10", directory: "/tmp", text: "hi" })) {
-    events.push(ev)
-  }
-
-  assert.equal(events.length, 1)
-  assert.equal(events[0].type, "error")
-  assert.ok(events[0].message.includes("no body"))
-})
-
-test("LmStudioBackend yields error when [DONE] arrives with no content", async () => {
-  resetMocks()
-  mockFetchImpl = () => makeResponse([
-    `data: {"choices":[{"delta":{"reasoning_content":"thinking only"}}]}`,
-    `data: [DONE]`,
-  ])
-
-  const backend = new LmStudioBackend()
-  const events = []
-  for await (const ev of backend.sendMessage({ sessionId: "s11", directory: "/tmp", text: "hi" })) {
-    events.push(ev)
-  }
-
-  assert.equal(events.at(-1).type, "error")
-  assert.ok(events.at(-1).message.includes("no text content"))
-  assert.equal(appendedMessages.length, 0, "no messages should be persisted on empty [DONE]")
-})
-
-test("LmStudioBackend yields error when fetch throws (unreachable)", async () => {
-  resetMocks()
+  t.after(() => { mockFetchImpl = null })
   mockFetchImpl = () => Promise.reject(new Error("ECONNREFUSED"))
 
   const backend = new LmStudioBackend()
@@ -230,12 +233,10 @@ test("LmStudioBackend yields error when fetch throws (unreachable)", async () =>
   assert.ok(events[0].message.includes("unreachable"))
 })
 
-test("LmStudioBackend yields error on EOF without [DONE] and no content", async () => {
+test("LmStudioBackend yields error on null response body", async (t) => {
   resetMocks()
-  mockFetchImpl = () => makeResponse([
-    `data: {"choices":[{"delta":{"reasoning_content":"thinking only"}}]}`,
-    // no [DONE], stream ends
-  ])
+  t.after(() => { mockFetchImpl = null })
+  mockFetchImpl = () => ({ ok: true, status: 200, body: null })
 
   const backend = new LmStudioBackend()
   const events = []
@@ -243,38 +244,106 @@ test("LmStudioBackend yields error on EOF without [DONE] and no content", async 
     events.push(ev)
   }
 
-  assert.equal(events.at(-1).type, "error")
+  assert.equal(events.length, 1)
+  assert.equal(events[0].type, "error")
+  assert.ok(events[0].message.includes("no body"))
 })
 
-test("LmStudioBackend does not persist messages on error response", async () => {
+test("LmStudioBackend yields error when chat.end has no message content", async (t) => {
   resetMocks()
-  mockFetchImpl = () => ({
-    ok: false,
-    status: 500,
-    body: makeStream([]),
-    text: async () => "{}",
-  })
-
-  const backend = new LmStudioBackend()
-  for await (const _ of backend.sendMessage({ sessionId: "s8", directory: "/tmp", text: "hi" })) {}
-
-  assert.equal(appendedMessages.length, 0, "no messages should be persisted on error")
-})
-
-test("LmStudioBackend captures token counts from usage field", async () => {
-  resetMocks()
+  t.after(() => { mockFetchImpl = null })
   mockFetchImpl = () => makeResponse([
-    `data: {"choices":[{"delta":{"content":"hi"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`,
-    `data: [DONE]`,
+    { event: "chat.start", data: { type: "chat.start", model_instance_id: "test-model" } },
+    { event: "chat.end", data: { type: "chat.end", result: {
+      output: [{ type: "reasoning", content: "only thinking" }],
+      stats: {},
+      response_id: "resp_empty",
+    }}},
   ])
 
   const backend = new LmStudioBackend()
   const events = []
-  for await (const ev of backend.sendMessage({ sessionId: "s9", directory: "/tmp", text: "hi" })) {
+  for await (const ev of backend.sendMessage({ sessionId: "s8", directory: "/tmp", text: "hi" })) {
     events.push(ev)
   }
 
-  const result = events.find((e) => e.type === "result")
-  assert.equal(result.inputTokens, 10)
-  assert.equal(result.outputTokens, 5)
+  assert.equal(events.at(-1).type, "error")
+  assert.ok(events.at(-1).message.includes("no text content"))
+})
+
+test("LmStudioBackend does not persist response_id on error", async (t) => {
+  resetMocks()
+  t.after(() => { mockFetchImpl = null })
+  mockFetchImpl = () => ({
+    ok: false,
+    status: 500,
+    body: makeSSEStream([]),
+    text: async () => "{}",
+  })
+
+  const backend = new LmStudioBackend()
+  for await (const _ of backend.sendMessage({ sessionId: "s9", directory: "/tmp", text: "hi" })) {}
+
+  assert.equal(mockResponseIds["s9"], undefined, "no response_id should be stored on error")
+})
+
+test("LmStudioBackend yields tool_use events for tool calls", async (t) => {
+  resetMocks()
+  t.after(() => { mockFetchImpl = null })
+  mockFetchImpl = () => makeResponse([
+    { event: "chat.start", data: { type: "chat.start", model_instance_id: "test-model" } },
+    { event: "tool_call.start", data: { type: "tool_call.start", tool: "web_search", provider_info: { type: "ephemeral_mcp" } } },
+    { event: "tool_call.success", data: { type: "tool_call.success", tool: "web_search", output: "result data" } },
+    { event: "message.delta", data: { type: "message.delta", content: "Based on the search..." } },
+    { event: "chat.end", data: { type: "chat.end", result: {
+      output: [
+        { type: "tool_call", tool: "web_search", output: "result data" },
+        { type: "message", content: "Based on the search..." },
+      ],
+      stats: {},
+      response_id: "resp_tool1",
+    }}},
+  ])
+
+  const backend = new LmStudioBackend()
+  const events = []
+  for await (const ev of backend.sendMessage({ sessionId: "s10", directory: "/tmp", text: "search" })) {
+    events.push(ev)
+  }
+
+  const toolEvents = events.filter((e) => e.type === "tool_use")
+  assert.equal(toolEvents.length, 2)
+  assert.equal(toolEvents[0].status, "start")
+  assert.equal(toolEvents[1].status, "success")
+  assert.equal(toolEvents[1].output, "result data")
+})
+
+test("LmStudioBackend sends auth header when API token is configured", async (t) => {
+  resetMocks()
+  t.after(() => { mockFetchImpl = null })
+
+  // Temporarily set the token in our mock config
+  const { config } = await import("../src/config.js")
+  const originalToken = config.lmstudioApiToken
+  config.lmstudioApiToken = "test-token-123"
+  t.after(() => { config.lmstudioApiToken = originalToken })
+
+  let capturedHeaders = null
+  mockFetchImpl = (url, opts) => {
+    capturedHeaders = opts.headers
+    return makeResponse([
+      { event: "chat.start", data: { type: "chat.start", model_instance_id: "test-model" } },
+      { event: "message.delta", data: { type: "message.delta", content: "authed" } },
+      { event: "chat.end", data: { type: "chat.end", result: {
+        output: [{ type: "message", content: "authed" }],
+        stats: {},
+        response_id: "resp_auth1",
+      }}},
+    ])
+  }
+
+  const backend = new LmStudioBackend()
+  for await (const _ of backend.sendMessage({ sessionId: "s11", directory: "/tmp", text: "hi" })) {}
+
+  assert.equal(capturedHeaders["Authorization"], "Bearer test-token-123")
 })

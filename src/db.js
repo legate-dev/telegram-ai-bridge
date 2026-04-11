@@ -13,16 +13,10 @@ export function getDb() {
   _db.pragma("busy_timeout = 3000")
 
   _db.exec(`
-    CREATE TABLE IF NOT EXISTS lmstudio_messages (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT    NOT NULL,
-      role       TEXT    NOT NULL,
-      content    TEXT    NOT NULL,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    CREATE TABLE IF NOT EXISTS lmstudio_response_ids (
+      session_id  TEXT PRIMARY KEY,
+      response_id TEXT NOT NULL
     );
-
-    CREATE INDEX IF NOT EXISTS idx_lmstudio_messages_session
-      ON lmstudio_messages (session_id, id);
 
     CREATE TABLE IF NOT EXISTS cli_sessions (
       cli                   TEXT NOT NULL,
@@ -333,27 +327,31 @@ export function clearChatBinding(chatId) {
 
 // -- lmstudio_messages queries --
 
+// -- lmstudio_response_ids queries --
+// Stores only an opaque response_id per session for thread continuity.
+// No conversation content is persisted — LM Studio manages history server-side.
+
 /**
- * Returns the full conversation history for an LM Studio session, ordered
- * by insertion time. Used to prepend context to each new request.
+ * Returns the last response_id for an LM Studio session, or null if none.
+ * Used as `previous_response_id` in the next request.
  * @param {string} sessionId
- * @returns {{ role: string, content: string }[]}
+ * @returns {string|null}
  */
-export function getLmStudioMessages(sessionId) {
-  return getDb()
-    .prepare("SELECT role, content FROM lmstudio_messages WHERE session_id = ? ORDER BY id")
-    .all(sessionId)
+export function getLmStudioResponseId(sessionId) {
+  const row = getDb()
+    .prepare("SELECT response_id FROM lmstudio_response_ids WHERE session_id = ?")
+    .get(sessionId)
+  return row?.response_id ?? null
 }
 
 /**
- * Appends a single message to the LM Studio conversation history.
- * Call with role="user" before sending and role="assistant" after receiving.
+ * Stores the latest response_id for an LM Studio session.
+ * Called after each successful turn to enable thread continuity.
  * @param {string} sessionId
- * @param {"user"|"assistant"|"system"} role
- * @param {string} content
+ * @param {string} responseId
  */
-export function appendLmStudioMessage(sessionId, role, content) {
+export function setLmStudioResponseId(sessionId, responseId) {
   getDb()
-    .prepare("INSERT INTO lmstudio_messages (session_id, role, content) VALUES (?, ?, ?)")
-    .run(sessionId, role, content)
+    .prepare("INSERT OR REPLACE INTO lmstudio_response_ids (session_id, response_id) VALUES (?, ?)")
+    .run(sessionId, responseId)
 }

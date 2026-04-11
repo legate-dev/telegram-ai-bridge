@@ -13,8 +13,8 @@ const availableBinaries = new Set()
 await mock.module("../src/db.js", {
   namedExports: {
     sessionCountsByCli: () => mockSessionCounts,
-    getLmStudioMessages: () => [],
-    appendLmStudioMessage: () => {},
+    getLmStudioResponseId: () => null,
+    setLmStudioResponseId: () => {},
   },
 })
 

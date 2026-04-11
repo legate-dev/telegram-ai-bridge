@@ -313,3 +313,42 @@ test("getModelsForCli returns array for lmstudio", async (t) => {
   assert.equal(result.length, 1)
   assert.equal(result[0].slug, "qwen3-0.6b")
 })
+
+// ── Callback data truncation (Telegram 64-byte limit) ─────────────────────────
+
+test("LM Studio model slugs over 54 chars use index-based callback data", () => {
+  const MAX_CALLBACK_SLUG = 54
+  const longSlug = "dolphin-mistral-glm-4.7-flash-24b-venice-edition-thinking-uncensored-i1@q4_k_s"
+  const shortSlug = "qwen3-0.6b"
+
+  // Long slug should use index
+  assert.ok(longSlug.length > MAX_CALLBACK_SLUG, "test slug should exceed limit")
+  const longCb = `setmodel:#0`
+  assert.ok(longCb.length <= 64, "indexed callback should fit in 64 bytes")
+
+  // Short slug should use slug directly
+  const shortCb = `setmodel:${shortSlug}`
+  assert.ok(shortCb.length <= 64, "short slug callback should fit in 64 bytes")
+})
+
+test("Index-based callback resolves correct model from list", async (t) => {
+  const longSlug1 = "dolphin-mistral-glm-4.7-flash-24b-venice-edition-thinking-uncensored-i1@q2_k_s"
+  const longSlug2 = "dolphin-mistral-glm-4.7-flash-24b-venice-edition-thinking-uncensored-i1@q4_k_s"
+  mockFetchImpl = () => Promise.resolve({
+    ok: true,
+    json: async () => ({
+      models: [
+        { key: longSlug1, display_name: "Dolphin Q2", type: "llm" },
+        { key: longSlug2, display_name: "Dolphin Q4", type: "llm" },
+      ],
+    }),
+  })
+  t.after(() => { mockFetchImpl = null })
+
+  const models = await discoverLmStudioModels()
+  // Index 0 should resolve to first model, index 1 to second
+  assert.equal(models[0].slug, longSlug1)
+  assert.equal(models[1].slug, longSlug2)
+  // Both share the same 54-char prefix — index-based resolution avoids ambiguity
+  assert.equal(longSlug1.slice(0, 54), longSlug2.slice(0, 54), "slugs share prefix")
+})

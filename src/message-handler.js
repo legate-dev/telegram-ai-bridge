@@ -1038,7 +1038,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           }
         }
 
-        const genReply = textParts.join("\n\n")
+        const genReply = textParts.join("")
         if (genReply) {
           await replyChunks(ctx, genReply)
         } else {

@@ -201,139 +201,136 @@ export class LmStudioBackend {
     let outputTokens = 0
 
     try {
-      let currentEvent = null
+      const processEventBlock = function* (rawBlock) {
+        const parsed = parseSseEventBlock(rawBlock)
+        if (!parsed) return false
+
+        const currentEvent = parsed.eventType
+        const payload = parsed.payload.trim()
+        if (!payload || payload === "[DONE]") return false
+
+        let data
+        try { data = JSON.parse(payload) } catch {
+          return false
+        }
+
+        switch (currentEvent) {
+          case "message.delta":
+            if (data.content) {
+              fullResponse += data.content
+              yield { type: "text", text: data.content }
+            }
+            return false
+
+          case "tool_call.start":
+            yield {
+              type: "tool_use",
+              toolName: data.tool ?? "",
+              toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
+              status: "start",
+            }
+            return false
+
+          case "tool_call.success":
+            yield {
+              type: "tool_use",
+              toolName: data.tool ?? "",
+              toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
+              status: "success",
+              output: data.output,
+            }
+            return false
+
+          case "tool_call.failure":
+            yield {
+              type: "tool_use",
+              toolName: data.metadata?.tool_name ?? "",
+              toolInput: data.metadata?.arguments ? JSON.stringify(data.metadata.arguments) : "",
+              status: "failure",
+              reason: data.reason,
+            }
+            return false
+
+          case "error":
+            // error is terminal for the consumer — yield and stop
+            yield { type: "error", message: data.error?.message ?? "Unknown LM Studio error" }
+            return true
+
+          case "chat.end": {
+            const result = data.result ?? data
+            responseId = result.response_id ?? null
+            const stats = result.stats ?? {}
+            inputTokens = stats.input_tokens ?? 0
+            outputTokens = stats.total_output_tokens ?? 0
+
+            // Persist the response_id for session continuity (opaque ID only, no content)
+            if (responseId) {
+              setLmStudioResponseId(sessionId, responseId)
+            }
+
+            // If streaming produced no text, extract from aggregated output
+            if (!fullResponse && result.output) {
+              const fallbackText = extractMessageTextFromOutput(result.output)
+              if (fallbackText) {
+                fullResponse += fallbackText
+                yield { type: "text", text: fallbackText }
+              }
+            }
+
+            if (!fullResponse) {
+              yield { type: "error", message: "LM Studio returned no text content" }
+              return true
+            }
+
+            yield {
+              type: "result",
+              sessionId,
+              inputTokens,
+              outputTokens,
+              tokensPerSecond: stats.tokens_per_second ?? null,
+            }
+            return true
+          }
+
+          // Informational events — skip silently
+          case "chat.start":
+          case "model_load.start":
+          case "model_load.progress":
+          case "model_load.end":
+          case "prompt_processing.start":
+          case "prompt_processing.progress":
+          case "prompt_processing.end":
+          case "reasoning.start":
+          case "reasoning.delta":
+          case "reasoning.end":
+          case "message.start":
+          case "message.end":
+          case "tool_call.arguments":
+          default:
+            return false
+        }
+      }
 
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          if (buf.trim()) {
+            const terminal = yield* processEventBlock(buf)
+            if (terminal) return
+          }
+          break
+        }
 
-        buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n")
+        buf += decoder.decode(value, { stream: true })
+        buf = buf.replace(/\r/g, "")
 
         let boundary = buf.indexOf("\n\n")
         while (boundary !== -1) {
           const rawBlock = buf.slice(0, boundary)
           buf = buf.slice(boundary + 2)
 
-          const parsed = parseSseEventBlock(rawBlock)
-          if (!parsed) {
-            boundary = buf.indexOf("\n\n")
-            continue
-          }
-
-          currentEvent = parsed.eventType
-          const payload = parsed.payload.trim()
-          if (!payload || payload === "[DONE]") {
-            currentEvent = null
-            boundary = buf.indexOf("\n\n")
-            continue
-          }
-
-          let data
-          try { data = JSON.parse(payload) } catch {
-            currentEvent = null
-            boundary = buf.indexOf("\n\n")
-            continue
-          }
-
-          switch (currentEvent) {
-            case "message.delta":
-              if (data.content) {
-                fullResponse += data.content
-                yield { type: "text", text: data.content }
-              }
-              break
-
-            case "tool_call.start":
-              yield {
-                type: "tool_use",
-                toolName: data.tool ?? "",
-                toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
-                status: "start",
-              }
-              break
-
-            case "tool_call.success":
-              yield {
-                type: "tool_use",
-                toolName: data.tool ?? "",
-                toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
-                status: "success",
-                output: data.output,
-              }
-              break
-
-            case "tool_call.failure":
-              yield {
-                type: "tool_use",
-                toolName: data.metadata?.tool_name ?? "",
-                toolInput: data.metadata?.arguments ? JSON.stringify(data.metadata.arguments) : "",
-                status: "failure",
-                reason: data.reason,
-              }
-              break
-
-            case "error":
-              // error is terminal for the consumer — yield and stop
-              yield { type: "error", message: data.error?.message ?? "Unknown LM Studio error" }
-              return
-
-            case "chat.end": {
-              const result = data.result ?? data
-              responseId = result.response_id ?? null
-              const stats = result.stats ?? {}
-              inputTokens = stats.input_tokens ?? 0
-              outputTokens = stats.total_output_tokens ?? 0
-
-              // Persist the response_id for session continuity (opaque ID only, no content)
-              if (responseId) {
-                setLmStudioResponseId(sessionId, responseId)
-              }
-
-              // If streaming produced no text, extract from aggregated output
-              if (!fullResponse && result.output) {
-                const fallbackText = extractMessageTextFromOutput(result.output)
-                if (fallbackText) {
-                  fullResponse += fallbackText
-                  yield { type: "text", text: fallbackText }
-                }
-              }
-
-              if (!fullResponse) {
-                yield { type: "error", message: "LM Studio returned no text content" }
-                return
-              }
-
-              yield {
-                type: "result",
-                sessionId,
-                inputTokens,
-                outputTokens,
-                tokensPerSecond: stats.tokens_per_second ?? null,
-              }
-              return
-            }
-
-            // Informational events — skip silently
-            case "chat.start":
-            case "model_load.start":
-            case "model_load.progress":
-            case "model_load.end":
-            case "prompt_processing.start":
-            case "prompt_processing.progress":
-            case "prompt_processing.end":
-            case "reasoning.start":
-            case "reasoning.delta":
-            case "reasoning.end":
-            case "message.start":
-            case "message.end":
-            case "tool_call.arguments":
-              break
-
-            default:
-              break
-          }
-
-          currentEvent = null
+          const terminal = yield* processEventBlock(rawBlock)
+          if (terminal) return
           boundary = buf.indexOf("\n\n")
         }
       }

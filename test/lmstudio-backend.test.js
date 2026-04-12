@@ -94,6 +94,21 @@ function makeResponse(events, status = 200) {
   }
 }
 
+function makeChunkedStream(chunks) {
+  const encoder = new TextEncoder()
+  let index = 0
+  return new ReadableStream({
+    pull(controller) {
+      if (index >= chunks.length) {
+        controller.close()
+        return
+      }
+      controller.enqueue(encoder.encode(chunks[index]))
+      index += 1
+    },
+  })
+}
+
 // ── Tests ──
 
 test("LmStudioBackend yields text chunks and result on successful stream", async (t) => {
@@ -256,6 +271,60 @@ test("LmStudioBackend extracts fallback text from structured message output", as
   assert.deepEqual(texts, ["Hello world"])
   assert.equal(events.at(-1).type, "result")
   assert.equal(mockResponseIds.s_structured, "resp_structured")
+})
+
+test("LmStudioBackend tolerates CRLF split across stream chunks", async (t) => {
+  resetMocks()
+  t.after(() => { mockFetchImpl = null })
+  mockFetchImpl = () => ({
+    ok: true,
+    status: 200,
+    body: makeChunkedStream([
+      'event: message.delta\r',
+      '\ndata: {"type":"message.delta","content":"split"}\r',
+      '\n\r',
+      '\nevent: chat.end\r\ndata: {"type":"chat.end","result":{"output":[{"type":"message","content":"split"}],"stats":{},"response_id":"resp_split"}}\r\n\r\n',
+    ]),
+    text: async () => "",
+  })
+
+  const backend = new LmStudioBackend()
+  const events = []
+  for await (const ev of backend.sendMessage({ sessionId: "s_split_crlf", directory: "/tmp", text: "hi" })) {
+    events.push(ev)
+  }
+
+  const texts = events.filter((e) => e.type === "text").map((e) => e.text)
+  assert.deepEqual(texts, ["split"])
+  assert.equal(events.at(-1).type, "result")
+  assert.equal(mockResponseIds.s_split_crlf, "resp_split")
+})
+
+test("LmStudioBackend flushes final SSE block without trailing delimiter", async (t) => {
+  resetMocks()
+  t.after(() => { mockFetchImpl = null })
+  mockFetchImpl = () => ({
+    ok: true,
+    status: 200,
+    body: makeChunkedStream([
+      'event: message.delta\n',
+      'data: {"type":"message.delta","content":"tail"}\n\n',
+      'event: chat.end\n',
+      'data: {"type":"chat.end","result":{"output":[{"type":"message","content":"tail"}],"stats":{},"response_id":"resp_tail"}}',
+    ]),
+    text: async () => "",
+  })
+
+  const backend = new LmStudioBackend()
+  const events = []
+  for await (const ev of backend.sendMessage({ sessionId: "s_final_block", directory: "/tmp", text: "hi" })) {
+    events.push(ev)
+  }
+
+  const texts = events.filter((e) => e.type === "text").map((e) => e.text)
+  assert.deepEqual(texts, ["tail"])
+  assert.equal(events.at(-1).type, "result")
+  assert.equal(mockResponseIds.s_final_block, "resp_tail")
 })
 
 test("LmStudioBackend yields error on non-200 response", async (t) => {

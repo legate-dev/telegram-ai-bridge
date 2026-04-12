@@ -40,12 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LM Studio callback data truncation** (#46). Telegram caps `callback_data`
   at 64 bytes. Long LM Studio model slugs (e.g.
   `dolphin-mistral-glm-4.7-flash-24b-venice-edition`) exceeded this limit.
-  Model keys that exceed 54 bytes (64 − len(`setmodel:`) − 1) are now encoded
-  as `#<index>:<sha256[:8]>`. The handler validates the 8-hex-char fingerprint
-  on resolution and returns a user-facing alert with differentiated text
-  (`invalid_token` vs `unavailable`) when the model list has changed under the
-  user's feet. Legacy `#<index>` tokens (no fingerprint) are still accepted
-  for backward compatibility.
+  Model keys whose `slug.length` exceeds 54 characters (`MAX_CALLBACK_SLUG`)
+  are now encoded as `#<index>:<sha256[:8]>`. `resolveIndexedModelSlug`
+  validates the fingerprint and returns a structured `{ ok, reason, slug }`
+  result: `"invalid_token"` (bad format) and `"unavailable"` (model list
+  unavailable) produce differentiated alert text; `"fingerprint_mismatch"` and
+  `"index_out_of_range"` fall back to the generic "Model list changed" alert.
+  Legacy `#<index>` tokens (no fingerprint, from before PR #46) are still
+  accepted for backward compatibility.
 
 - **LM Studio SSE stream edge cases** (#47). Replaced the line-by-line SSE
   parser with a block-based parser (`parseSseEventBlock`) that correctly
@@ -372,7 +374,7 @@ Thanks to [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans) a
 own machines and filing the first real-world bug reports — exactly the feedback loop
 that makes an open source project actually useful.
 
-[Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.1...HEAD
 [0.5.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.4...v0.4.0

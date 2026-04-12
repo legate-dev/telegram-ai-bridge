@@ -374,7 +374,7 @@ Thanks to [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans) a
 own machines and filing the first real-world bug reports — exactly the feedback loop
 that makes an open source project actually useful.
 
-[Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.4...v0.4.0

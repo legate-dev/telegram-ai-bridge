@@ -116,11 +116,17 @@ await mock.module("../src/model-discovery.js", {
   namedExports: {
     getModelsForCli: async (cli) => mockModelDiscovery.modelsByCli[cli] ?? null,
     resolveIndexedModelSlug: (token, models) => {
-      const match = /^#(\d+)(?::([0-9a-f]{8}))?$/.exec(token)
+      const match = /^#(\d+)(?::([0-9a-f]+))?$/.exec(token)
       if (!match) return { ok: false, reason: "invalid_token", slug: null }
 
       const idx = Number.parseInt(match[1], 10)
       const fingerprint = match[2] ?? ""
+      if (fingerprint && fingerprint.length !== 8) {
+        return { ok: false, reason: "invalid_token", slug: null }
+      }
+      if (!Array.isArray(models) || models.length === 0) {
+        return { ok: false, reason: "unavailable", slug: null }
+      }
       const model = models?.[idx]
       if (!model?.slug) return { ok: false, reason: "index_out_of_range", slug: null }
       if (fingerprint && model.fingerprint && fingerprint !== model.fingerprint) {
@@ -942,10 +948,44 @@ test("callback setmodel:#index:fingerprint rejects stale LM Studio model list", 
     ctx.callbackAnswers.some((a) => a?.show_alert === true),
     "expected a show_alert when indexed LM Studio callback fingerprint is stale",
   )
+  assert.ok(
+    ctx.callbackAnswers.some((a) => a?.text?.includes("Model list changed")),
+    "expected stale list mismatches to instruct the user to rerun /models",
+  )
+})
+
+test("callback setmodel:#index rejects invalid LM Studio callback token", async () => {
+  resetMocks()
+  mockModelDiscovery.modelsByCli.lmstudio = [
+    { slug: "lmstudio-model-q4", fingerprint: "deadbeef" },
+  ]
+  mockDb.binding = { cli: "lmstudio", session_id: "sess-lms-invalid", agent: null, directory: "/tmp", model: null }
+  const ctx = createCallbackCtx({ chatId: 1019, data: "setmodel:#0:abc" })
+  await callbackHandler(ctx)
+
+  assert.equal(mockDb.setChatBindingCalls.length, 0)
+  assert.ok(
+    ctx.callbackAnswers.some((a) => a?.text?.includes("invalid")),
+    "expected invalid callback tokens to show a targeted alert",
+  )
+})
+
+test("callback setmodel:#index reports LM Studio model list unavailable", async () => {
+  resetMocks()
+  mockModelDiscovery.modelsByCli.lmstudio = []
+  mockDb.binding = { cli: "lmstudio", session_id: "sess-lms-unavailable", agent: null, directory: "/tmp", model: null }
+  const ctx = createCallbackCtx({ chatId: 1020, data: "setmodel:#0:deadbeef" })
+  await callbackHandler(ctx)
+
+  assert.equal(mockDb.setChatBindingCalls.length, 0)
+  assert.ok(
+    ctx.callbackAnswers.some((a) => a?.text?.includes("temporarily unavailable")),
+    "expected unavailable model lists to show a retry-later alert",
+  )
 })
 
 // ── AsyncGenerator consumer path (Claude streaming) ───────────────────────────
-// Chat IDs 3001–3006 are reserved for this section.
+// Chat IDs 3001–3007 are reserved for this section.
 // Events use the real claude.js format: { type:"text", text } / { type:"permission", requestId, toolName, toolInput, toolInputRaw }.
 
 test("AsyncGenerator: text + result events → replyChunks with accumulated text", async () => {

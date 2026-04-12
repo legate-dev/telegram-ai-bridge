@@ -702,15 +702,22 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           return
         }
         // Resolve indexed callback slugs (Telegram 64-byte limit workaround).
-        // Long LM Studio model keys use `#<index>` which maps back to the
-        // model list position. Falls back to the callback slug as-is.
+        // Long LM Studio model keys use `#<index>:<fingerprint>` to map back
+        // to the model list position; legacy `#<index>` is still accepted.
+        // Falls back to the callback slug as-is.
         if (cli === "lmstudio" && slug.startsWith("#")) {
           const models = await getModelsForCli("lmstudio")
           const resolved = resolveIndexedModelSlug(slug, models)
           if (resolved.ok) {
             slug = resolved.slug
           } else {
-            await ctx.answerCallbackQuery({ text: "Model list changed — please run /models again.", show_alert: true })
+            let alertText = "Model list changed — please run /models again."
+            if (resolved.reason === "invalid_token") {
+              alertText = "This model selection is invalid. Please run /models again."
+            } else if (resolved.reason === "unavailable") {
+              alertText = "Model list is temporarily unavailable. Please try /models again in a moment."
+            }
+            await ctx.answerCallbackQuery({ text: alertText, show_alert: true })
             return
           }
         }

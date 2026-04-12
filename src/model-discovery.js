@@ -5,6 +5,7 @@ import { config } from "./config.js"
 const CLAUDE_STATIC_ALIASES = ["opus", "sonnet", "haiku"]
 export const MAX_CALLBACK_SLUG = 54
 const MODEL_CALLBACK_HASH_LEN = 8
+const INDEXED_MODEL_TOKEN_RE = /^#(\d+)(?::([0-9a-f]+))?$/
 
 export function fingerprintModelSlug(slug) {
   return createHash("sha256").update(slug).digest("hex").slice(0, MODEL_CALLBACK_HASH_LEN)
@@ -16,11 +17,19 @@ export function encodeModelCallbackSlug(cliName, slug, index) {
 }
 
 export function resolveIndexedModelSlug(token, models) {
-  const match = /^#(\d+)(?::([0-9a-f]{8}))?$/.exec(token)
+  const match = INDEXED_MODEL_TOKEN_RE.exec(token)
   if (!match) return { ok: false, reason: "invalid_token", slug: null }
 
   const idx = Number.parseInt(match[1], 10)
   const fingerprint = match[2] ?? ""
+  if (fingerprint && fingerprint.length !== MODEL_CALLBACK_HASH_LEN) {
+    return { ok: false, reason: "invalid_token", slug: null }
+  }
+
+  if (!Array.isArray(models) || models.length === 0) {
+    return { ok: false, reason: "unavailable", slug: null }
+  }
+
   const model = models?.[idx]
   if (!model?.slug) return { ok: false, reason: "index_out_of_range", slug: null }
   if (fingerprint && fingerprintModelSlug(model.slug) !== fingerprint) {

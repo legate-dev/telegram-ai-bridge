@@ -369,6 +369,19 @@ test("resolveIndexedModelSlug rejects stale fingerprint mismatch", () => {
   assert.equal(resolved.reason, "fingerprint_mismatch")
 })
 
+test("resolveIndexedModelSlug rejects invalid fingerprint length", () => {
+  const models = [{ slug: "model-a" }, { slug: "model-b" }]
+  const resolved = resolveIndexedModelSlug("#1:abc", models)
+  assert.equal(resolved.ok, false)
+  assert.equal(resolved.reason, "invalid_token")
+})
+
+test("resolveIndexedModelSlug reports unavailable when model list is empty", () => {
+  const resolved = resolveIndexedModelSlug(`#1:${fingerprintModelSlug("model-b")}`, [])
+  assert.equal(resolved.ok, false)
+  assert.equal(resolved.reason, "unavailable")
+})
+
 test("resolveIndexedModelSlug resolves matching fingerprint", () => {
   const models = [{ slug: "model-a" }, { slug: "model-b" }]
   const token = `#1:${fingerprintModelSlug("model-b")}`

@@ -4,7 +4,7 @@ import { getChatBinding, setChatBinding, getCliSessionById } from "./db.js"
 import { config } from "./config.js"
 import { checkRateLimit } from "./rate-limit.js"
 import { getBackend, supportedClis } from "./backends.js"
-import { getModelsForCli } from "./model-discovery.js"
+import { getModelsForCli, resolveIndexedModelSlug } from "./model-discovery.js"
 import { createNewSession } from "./commands.js"
 import { log, redactString } from "./log.js"
 import { readLastTurn } from "./last-turn.js"
@@ -702,15 +702,22 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           return
         }
         // Resolve indexed callback slugs (Telegram 64-byte limit workaround).
-        // Long LM Studio model keys use `#<index>` which maps back to the
-        // model list position. Falls back to the callback slug as-is.
+        // Long LM Studio model keys use `#<index>:<fingerprint>` to map back
+        // to the model list position; legacy `#<index>` is still accepted.
+        // Falls back to the callback slug as-is.
         if (cli === "lmstudio" && slug.startsWith("#")) {
-          const idx = parseInt(slug.slice(1), 10)
           const models = await getModelsForCli("lmstudio")
-          if (models && models[idx]) {
-            slug = models[idx].slug
+          const resolved = resolveIndexedModelSlug(slug, models)
+          if (resolved.ok) {
+            slug = resolved.slug
           } else {
-            await ctx.answerCallbackQuery({ text: "Model list changed — please run /models again.", show_alert: true })
+            let alertText = "Model list changed — please run /models again."
+            if (resolved.reason === "invalid_token") {
+              alertText = "This model selection is invalid. Please run /models again."
+            } else if (resolved.reason === "unavailable") {
+              alertText = "Model list is temporarily unavailable. Please try /models again in a moment."
+            }
+            await ctx.answerCallbackQuery({ text: alertText, show_alert: true })
             return
           }
         }
@@ -1038,7 +1045,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
           }
         }
 
-        const genReply = textParts.join("\n\n")
+        const genReply = textParts.join("")
         if (genReply) {
           await replyChunks(ctx, genReply)
         } else {

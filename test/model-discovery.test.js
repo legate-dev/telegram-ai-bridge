@@ -81,7 +81,15 @@ await mock.module("../src/config.js", {
   namedExports: { config: mockConfig },
 })
 
-const { discoverCodexModels, discoverClaudeModels, discoverLmStudioModels, getModelsForCli } = await import("../src/model-discovery.js")
+const {
+  discoverCodexModels,
+  discoverClaudeModels,
+  discoverLmStudioModels,
+  encodeModelCallbackSlug,
+  fingerprintModelSlug,
+  getModelsForCli,
+  resolveIndexedModelSlug,
+} = await import("../src/model-discovery.js")
 
 // ── Fetch mock for LM Studio tests ──
 let mockFetchImpl = null
@@ -317,18 +325,18 @@ test("getModelsForCli returns array for lmstudio", async (t) => {
 // ── Callback data truncation (Telegram 64-byte limit) ─────────────────────────
 
 test("LM Studio model slugs over 54 chars use index-based callback data", () => {
-  const MAX_CALLBACK_SLUG = 54
   const longSlug = "dolphin-mistral-glm-4.7-flash-24b-venice-edition-thinking-uncensored-i1@q4_k_s"
   const shortSlug = "qwen3-0.6b"
 
   // Long slug should use index
-  assert.ok(longSlug.length > MAX_CALLBACK_SLUG, "test slug should exceed limit")
-  const longCb = `setmodel:#0`
+  const longCb = `setmodel:${encodeModelCallbackSlug("lmstudio", longSlug, 0)}`
   assert.ok(longCb.length <= 64, "indexed callback should fit in 64 bytes")
+  assert.match(longCb, /^setmodel:#0:[0-9a-f]{8}$/, "indexed callback should carry a short fingerprint")
 
   // Short slug should use slug directly
-  const shortCb = `setmodel:${shortSlug}`
+  const shortCb = `setmodel:${encodeModelCallbackSlug("lmstudio", shortSlug, 1)}`
   assert.ok(shortCb.length <= 64, "short slug callback should fit in 64 bytes")
+  assert.equal(shortCb, `setmodel:${shortSlug}`)
 })
 
 test("Index-based callback resolves correct model from list", async (t) => {
@@ -351,4 +359,33 @@ test("Index-based callback resolves correct model from list", async (t) => {
   assert.equal(models[1].slug, longSlug2)
   // Both share the same 54-char prefix — index-based resolution avoids ambiguity
   assert.equal(longSlug1.slice(0, 54), longSlug2.slice(0, 54), "slugs share prefix")
+})
+
+test("resolveIndexedModelSlug rejects stale fingerprint mismatch", () => {
+  const models = [{ slug: "model-a" }, { slug: "model-b" }]
+  const token = `#1:${fingerprintModelSlug("wrong-model")}`
+  const resolved = resolveIndexedModelSlug(token, models)
+  assert.equal(resolved.ok, false)
+  assert.equal(resolved.reason, "fingerprint_mismatch")
+})
+
+test("resolveIndexedModelSlug rejects invalid fingerprint length", () => {
+  const models = [{ slug: "model-a" }, { slug: "model-b" }]
+  const resolved = resolveIndexedModelSlug("#1:abc", models)
+  assert.equal(resolved.ok, false)
+  assert.equal(resolved.reason, "invalid_token")
+})
+
+test("resolveIndexedModelSlug reports unavailable when model list is empty", () => {
+  const resolved = resolveIndexedModelSlug(`#1:${fingerprintModelSlug("model-b")}`, [])
+  assert.equal(resolved.ok, false)
+  assert.equal(resolved.reason, "unavailable")
+})
+
+test("resolveIndexedModelSlug resolves matching fingerprint", () => {
+  const models = [{ slug: "model-a" }, { slug: "model-b" }]
+  const token = `#1:${fingerprintModelSlug("model-b")}`
+  const resolved = resolveIndexedModelSlug(token, models)
+  assert.equal(resolved.ok, true)
+  assert.equal(resolved.slug, "model-b")
 })

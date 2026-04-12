@@ -113,6 +113,7 @@ const mockModels = {
 await mock.module("../src/model-discovery.js", {
   namedExports: {
     getModelsForCli: (cli) => mockModels[cli] ?? null,
+    encodeModelCallbackSlug: (_cli, slug) => slug,
   },
 })
 

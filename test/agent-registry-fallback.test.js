@@ -84,6 +84,7 @@ await mock.module("../src/backends.js", {
 await mock.module("../src/model-discovery.js", {
   namedExports: {
     getModelsForCli: () => null,
+    encodeModelCallbackSlug: (_cli, slug) => slug,
   },
 })
 

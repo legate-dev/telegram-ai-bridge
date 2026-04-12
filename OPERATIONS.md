@@ -42,6 +42,14 @@
 - Commands and callback queries remain rate-limited per-update (each slash command = 1 slot, each button tap = 1 slot)
 - The authoritative way to distinguish bot commands from plain text is Telegram's **`bot_command` entity at offset 0** (`entities.some((e) => e.type === "bot_command" && e.offset === 0)`), NOT `text.startsWith("/")`. Using the string prefix check would misclassify Unix paths like `/Users/foo/repo` as commands and apply per-update rate limiting unexpectedly. Same pattern used in `src/message-handler.js:600-601`
 
+### LM Studio backend (added 2026-04-12 with PRs #41–#47)
+
+- LM Studio stores conversation history entirely server-side. The bridge stores only an opaque `response_id` per session (`lmstudio_response_ids` table, one row per session). **No message content is ever persisted in the bridge DB** — this is the core privacy guarantee. Do not add content fields to this table
+- Thread continuity is achieved via `previous_response_id` in the POST body. A missing or stale `response_id` (e.g. after DB reset) starts a fresh conversation — there is no history replay fallback and none is desired
+- SSE stream events are parsed **by block** (`parseSseEventBlock`), not line by line. A block is delimited by `\n\n`. Do not revert to line-based parsing: multi-line `data:` payloads and arbitrary TCP chunk boundaries require the block model to be correct
+- Model callback slugs that exceed 54 bytes (64-byte Telegram `callback_data` limit minus the `setmodel:` prefix) are encoded as `#<index>:<sha256[:8]>`. The fingerprint is the first 8 hex chars of the SHA-256 of the full slug. `resolveIndexedModelSlug` validates the fingerprint and returns `{ ok: false, reason: "invalid_token" }` on mismatch. **Legacy `#<index>` tokens (no fingerprint, from before PR #46) are still accepted** for backward compatibility — `INDEXED_MODEL_TOKEN_RE = /^#(\d+)(?::([0-9a-f]+))?$/`
+- `encodeModelCallbackSlug` only applies the index/fingerprint scheme when `cliName === "lmstudio"` AND `slug.length > MAX_CALLBACK_SLUG`. All other CLIs pass the raw slug through
+
 ### Error logging redaction (added 2026-04-08 with PR #131 01a57f7)
 
 - `String(err)` passed to `log.error` in permission-related error paths (`permission_resume_failed`, `permission_reply_failed`) MUST be wrapped in `redactString()` — raw error messages from fetch/HTTP can contain full URLs including Kilo session IDs and should not land in persisted logs

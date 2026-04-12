@@ -298,6 +298,28 @@ Eliminate obvious transport failure modes before adding more surface area.
 - [x] Error messages are honest: no more "Try /agent sonnet" on timeout/busy
 - [ ] End-to-end verified with a real heavy Kilo turn from Telegram
 
+## Phase 4.8: LM Studio Backend [✅]
+
+Local LM Studio server as a privacy-first backend via its native REST API. No message content ever stored in the bridge — history managed entirely server-side by LM Studio. No CLI binary required.
+
+### Step 4.8.1: Backend + model selection + hardening [✅]
+
+**Gate:** Send a message to LM Studio from Telegram and receive a streamed response; model selection via inline keyboard works without callback data truncation.
+
+- [x] `LmStudioBackend` — HTTP POST `/api/v1/chat` with named SSE streaming; requires LM Studio ≥ 0.4.0 (PR #41)
+- [x] Privacy-first: only `response_id` stored per session in `lmstudio_response_ids`; no message history in local DB (PR #41)
+- [x] Thread continuity via `previous_response_id` — stateful chats without replaying history (PR #41)
+- [x] Migration: one-time `VACUUM` purges any legacy `lmstudio_messages` data on upgrade (PR #41)
+- [x] Optional auth via `LMSTUDIO_API_TOKEN` (Bearer token) for authenticated servers (PR #41)
+- [x] `/models` inline keyboard + `/model` command for LM Studio model selection (PR #43)
+- [x] Migrate from compatibility shim to native v1 API (`POST /api/v1/chat`, stateful, MCP-ready) (PR #44)
+- [x] Callback slug fingerprint: `#<index>:<sha256[:8]>` for slugs over 54 bytes — Telegram 64-byte `callback_data` limit (PR #46)
+- [x] SSE block parser (`parseSseEventBlock`) — block-based not line-based; handles multi-line `data:` and arbitrary TCP chunk boundaries (PR #47)
+- [x] `extractMessageText`/`extractMessageTextFromOutput` helpers for flexible content shapes (PR #47)
+- [x] `resolveIndexedModelSlug` returns structured error with `reason` field; user-facing alert text differentiated by reason (PR #47)
+- [x] `textParts.join("")` instead of `join("\n\n")` — no spurious blank lines between LM Studio response chunks (PR #47)
+- [x] End-to-end verified from Telegram
+
 ## Phase 5: File & Image Support [⏸]
 
 Pass files and images between Telegram and Kilo sessions.

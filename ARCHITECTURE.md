@@ -1,7 +1,7 @@
 # Architecture — Telegram Bridge
 
 > Lightweight Node.js bridge: Telegram bot ↔ AI coding CLI sessions.
-> Supports Kilo, Codex, GitHub Copilot, Gemini CLI, and Claude Code.
+> Supports Kilo, Codex, GitHub Copilot, Gemini CLI, Claude Code, and LM Studio.
 
 ## Problem
 

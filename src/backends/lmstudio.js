@@ -54,6 +54,54 @@ function authHeaders() {
   return headers
 }
 
+function parseSseEventBlock(rawBlock) {
+  let eventType = null
+  const dataLines = []
+
+  for (const rawLine of rawBlock.split("\n")) {
+    const line = rawLine.replace(/\r$/, "")
+    if (!line || line.startsWith(":")) continue
+
+    const sep = line.indexOf(":")
+    const field = sep === -1 ? line : line.slice(0, sep)
+    let value = sep === -1 ? "" : line.slice(sep + 1)
+    if (value.startsWith(" ")) value = value.slice(1)
+
+    if (field === "event") {
+      eventType = value.trim()
+    } else if (field === "data") {
+      dataLines.push(value)
+    }
+  }
+
+  const payload = dataLines.join("\n")
+  if (!eventType && !payload.trim()) return null
+  return { eventType, payload }
+}
+
+function extractMessageText(content) {
+  if (typeof content === "string") return content
+  if (Array.isArray(content)) return content.map(extractMessageText).join("")
+  if (!content || typeof content !== "object") return ""
+
+  if (typeof content.text === "string") return content.text
+  if (Array.isArray(content.text)) return content.text.map(extractMessageText).join("")
+  if (typeof content.content === "string") return content.content
+  if (Array.isArray(content.content)) return content.content.map(extractMessageText).join("")
+  return ""
+}
+
+function extractMessageTextFromOutput(output) {
+  if (!Array.isArray(output)) return ""
+  return output
+    .map((item) => {
+      if (!item || typeof item !== "object") return ""
+      if (item.type !== "message") return ""
+      return extractMessageText(item.content ?? item.text ?? "")
+    })
+    .join("")
+}
+
 export class LmStudioBackend {
   constructor() {
     this.name = "lmstudio"
@@ -142,6 +190,8 @@ export class LmStudioBackend {
 
     // ── SSE stream parsing ──
     // Native API uses named events: "event: <type>\ndata: <json>\n\n"
+    // Parse by SSE block rather than individual lines so multi-line `data:`
+    // payloads and arbitrary chunk boundaries remain valid.
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buf = ""
@@ -157,126 +207,134 @@ export class LmStudioBackend {
         const { done, value } = await reader.read()
         if (done) break
 
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split("\n")
-        buf = lines.pop() ?? ""
+        buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n")
 
-        for (const line of lines) {
-          // SSE event type line
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim()
+        let boundary = buf.indexOf("\n\n")
+        while (boundary !== -1) {
+          const rawBlock = buf.slice(0, boundary)
+          buf = buf.slice(boundary + 2)
+
+          const parsed = parseSseEventBlock(rawBlock)
+          if (!parsed) {
+            boundary = buf.indexOf("\n\n")
             continue
           }
 
-          // SSE data line
-          if (line.startsWith("data: ")) {
-            const payload = line.slice(6).trim()
-            if (!payload) continue
+          currentEvent = parsed.eventType
+          const payload = parsed.payload.trim()
+          if (!payload || payload === "[DONE]") {
+            currentEvent = null
+            boundary = buf.indexOf("\n\n")
+            continue
+          }
 
-            let data
-            try { data = JSON.parse(payload) } catch { continue }
+          let data
+          try { data = JSON.parse(payload) } catch {
+            currentEvent = null
+            boundary = buf.indexOf("\n\n")
+            continue
+          }
 
-            switch (currentEvent) {
-              case "message.delta":
-                if (data.content) {
-                  fullResponse += data.content
-                  yield { type: "text", text: data.content }
+          switch (currentEvent) {
+            case "message.delta":
+              if (data.content) {
+                fullResponse += data.content
+                yield { type: "text", text: data.content }
+              }
+              break
+
+            case "tool_call.start":
+              yield {
+                type: "tool_use",
+                toolName: data.tool ?? "",
+                toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
+                status: "start",
+              }
+              break
+
+            case "tool_call.success":
+              yield {
+                type: "tool_use",
+                toolName: data.tool ?? "",
+                toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
+                status: "success",
+                output: data.output,
+              }
+              break
+
+            case "tool_call.failure":
+              yield {
+                type: "tool_use",
+                toolName: data.metadata?.tool_name ?? "",
+                toolInput: data.metadata?.arguments ? JSON.stringify(data.metadata.arguments) : "",
+                status: "failure",
+                reason: data.reason,
+              }
+              break
+
+            case "error":
+              // error is terminal for the consumer — yield and stop
+              yield { type: "error", message: data.error?.message ?? "Unknown LM Studio error" }
+              return
+
+            case "chat.end": {
+              const result = data.result ?? data
+              responseId = result.response_id ?? null
+              const stats = result.stats ?? {}
+              inputTokens = stats.input_tokens ?? 0
+              outputTokens = stats.total_output_tokens ?? 0
+
+              // Persist the response_id for session continuity (opaque ID only, no content)
+              if (responseId) {
+                setLmStudioResponseId(sessionId, responseId)
+              }
+
+              // If streaming produced no text, extract from aggregated output
+              if (!fullResponse && result.output) {
+                const fallbackText = extractMessageTextFromOutput(result.output)
+                if (fallbackText) {
+                  fullResponse += fallbackText
+                  yield { type: "text", text: fallbackText }
                 }
-                break
+              }
 
-              case "tool_call.start":
-                yield {
-                  type: "tool_use",
-                  toolName: data.tool ?? "",
-                  toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
-                  status: "start",
-                }
-                break
-
-              case "tool_call.success":
-                yield {
-                  type: "tool_use",
-                  toolName: data.tool ?? "",
-                  toolInput: data.arguments ? JSON.stringify(data.arguments) : "",
-                  status: "success",
-                  output: data.output,
-                }
-                break
-
-              case "tool_call.failure":
-                yield {
-                  type: "tool_use",
-                  toolName: data.metadata?.tool_name ?? "",
-                  toolInput: data.metadata?.arguments ? JSON.stringify(data.metadata.arguments) : "",
-                  status: "failure",
-                  reason: data.reason,
-                }
-                break
-
-              case "error":
-                // error is terminal for the consumer — yield and stop
-                yield { type: "error", message: data.error?.message ?? "Unknown LM Studio error" }
-                return
-
-              case "chat.end": {
-                const result = data.result ?? data
-                responseId = result.response_id ?? null
-                const stats = result.stats ?? {}
-                inputTokens = stats.input_tokens ?? 0
-                outputTokens = stats.total_output_tokens ?? 0
-
-                // Persist the response_id for session continuity (opaque ID only, no content)
-                if (responseId) {
-                  setLmStudioResponseId(sessionId, responseId)
-                }
-
-                // If streaming produced no text, extract from aggregated output
-                if (!fullResponse && result.output) {
-                  for (const item of result.output) {
-                    if (item.type === "message" && item.content) {
-                      fullResponse += item.content
-                    }
-                  }
-                }
-
-                if (!fullResponse) {
-                  yield { type: "error", message: "LM Studio returned no text content" }
-                  return
-                }
-
-                yield {
-                  type: "result",
-                  sessionId,
-                  inputTokens,
-                  outputTokens,
-                  tokensPerSecond: stats.tokens_per_second ?? null,
-                }
+              if (!fullResponse) {
+                yield { type: "error", message: "LM Studio returned no text content" }
                 return
               }
 
-              // Informational events — skip silently
-              case "chat.start":
-              case "model_load.start":
-              case "model_load.progress":
-              case "model_load.end":
-              case "prompt_processing.start":
-              case "prompt_processing.progress":
-              case "prompt_processing.end":
-              case "reasoning.start":
-              case "reasoning.delta":
-              case "reasoning.end":
-              case "message.start":
-              case "message.end":
-              case "tool_call.arguments":
-                break
-
-              default:
-                break
+              yield {
+                type: "result",
+                sessionId,
+                inputTokens,
+                outputTokens,
+                tokensPerSecond: stats.tokens_per_second ?? null,
+              }
+              return
             }
 
-            currentEvent = null
-            continue
+            // Informational events — skip silently
+            case "chat.start":
+            case "model_load.start":
+            case "model_load.progress":
+            case "model_load.end":
+            case "prompt_processing.start":
+            case "prompt_processing.progress":
+            case "prompt_processing.end":
+            case "reasoning.start":
+            case "reasoning.delta":
+            case "reasoning.end":
+            case "message.start":
+            case "message.end":
+            case "tool_call.arguments":
+              break
+
+            default:
+              break
           }
+
+          currentEvent = null
+          boundary = buf.indexOf("\n\n")
         }
       }
     } finally {

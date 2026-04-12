@@ -63,8 +63,12 @@ function makeSSEStream(events) {
   const lines = []
   for (const ev of events) {
     lines.push(`event: ${ev.event}`)
-    const payload = typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data)
-    lines.push(`data: ${payload}`)
+    const payloadLines = Array.isArray(ev.dataLines)
+      ? ev.dataLines
+      : [typeof ev.data === "string" ? ev.data : JSON.stringify(ev.data)]
+    for (const payload of payloadLines) {
+      lines.push(`data: ${payload}`)
+    }
     lines.push("") // blank line separates events
   }
   const chunk = encoder.encode(lines.join("\n") + "\n")
@@ -194,6 +198,64 @@ test("LmStudioBackend skips reasoning events", async (t) => {
 
   const texts = events.filter((e) => e.type === "text").map((e) => e.text)
   assert.deepEqual(texts, ["final answer"], "reasoning events should not produce text yields")
+})
+
+test("LmStudioBackend parses multi-line SSE data blocks", async (t) => {
+  resetMocks()
+  t.after(() => { mockFetchImpl = null })
+  mockFetchImpl = () => makeResponse([
+    {
+      event: "message.delta",
+      dataLines: [
+        '{"type":"message.delta",',
+        '"content":"Hello from multiline SSE"}',
+      ],
+    },
+    { event: "chat.end", data: { type: "chat.end", result: {
+      output: [{ type: "message", content: "Hello from multiline SSE" }],
+      stats: {},
+      response_id: "resp_multi",
+    }}},
+  ])
+
+  const backend = new LmStudioBackend()
+  const events = []
+  for await (const ev of backend.sendMessage({ sessionId: "s_multiline", directory: "/tmp", text: "hi" })) {
+    events.push(ev)
+  }
+
+  const texts = events.filter((e) => e.type === "text").map((e) => e.text)
+  assert.deepEqual(texts, ["Hello from multiline SSE"])
+  assert.equal(events.at(-1).type, "result")
+})
+
+test("LmStudioBackend extracts fallback text from structured message output", async (t) => {
+  resetMocks()
+  t.after(() => { mockFetchImpl = null })
+  mockFetchImpl = () => makeResponse([
+    { event: "chat.end", data: { type: "chat.end", result: {
+      output: [{
+        type: "message",
+        content: [
+          { type: "output_text", text: "Hello" },
+          { type: "output_text", text: " world" },
+        ],
+      }],
+      stats: { input_tokens: 2, total_output_tokens: 2 },
+      response_id: "resp_structured",
+    }}},
+  ])
+
+  const backend = new LmStudioBackend()
+  const events = []
+  for await (const ev of backend.sendMessage({ sessionId: "s_structured", directory: "/tmp", text: "hi" })) {
+    events.push(ev)
+  }
+
+  const texts = events.filter((e) => e.type === "text").map((e) => e.text)
+  assert.deepEqual(texts, ["Hello world"])
+  assert.equal(events.at(-1).type, "result")
+  assert.equal(mockResponseIds.s_structured, "resp_structured")
 })
 
 test("LmStudioBackend yields error on non-200 response", async (t) => {

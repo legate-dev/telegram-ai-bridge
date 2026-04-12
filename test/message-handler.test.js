@@ -35,6 +35,11 @@ const mockBackend = createMockBackend()
 let activeGeneratorBackend = null
 
 const mockCreateNewSessionCalls = []
+const mockModelDiscovery = {
+  modelsByCli: {
+    lmstudio: null,
+  },
+}
 
 // Stateful path registry (mirrors the real registerPath/resolvePath flow from telegram-utils.js)
 const pathRegistry = new Map()
@@ -103,6 +108,25 @@ await mock.module("../src/commands.js", {
   namedExports: {
     createNewSession: async (...args) => {
       mockCreateNewSessionCalls.push(args)
+    },
+  },
+})
+
+await mock.module("../src/model-discovery.js", {
+  namedExports: {
+    getModelsForCli: async (cli) => mockModelDiscovery.modelsByCli[cli] ?? null,
+    resolveIndexedModelSlug: (token, models) => {
+      const match = /^#(\d+)(?::([0-9a-f]{8}))?$/.exec(token)
+      if (!match) return { ok: false, reason: "invalid_token", slug: null }
+
+      const idx = Number.parseInt(match[1], 10)
+      const fingerprint = match[2] ?? ""
+      const model = models?.[idx]
+      if (!model?.slug) return { ok: false, reason: "index_out_of_range", slug: null }
+      if (fingerprint && model.fingerprint && fingerprint !== model.fingerprint) {
+        return { ok: false, reason: "fingerprint_mismatch", slug: null }
+      }
+      return { ok: true, reason: null, slug: model.slug }
     },
   },
 })
@@ -189,6 +213,7 @@ function resetMocks() {
   mockPathValidator.result = { ok: true }
   mockSupportedClis.result = ["claude", "kilo"]
   mockLastTurn.result = null
+  mockModelDiscovery.modelsByCli.lmstudio = null
   activeGeneratorBackend = null
 }
 
@@ -890,6 +915,35 @@ test("callback setmodel: on unsupported CLI answers with not-supported alert", a
   )
 })
 
+test("callback setmodel:#index:fingerprint resolves LM Studio model from current list", async () => {
+  resetMocks()
+  mockModelDiscovery.modelsByCli.lmstudio = [
+    { slug: "lmstudio-model-q4", fingerprint: "deadbeef" },
+  ]
+  mockDb.binding = { cli: "lmstudio", session_id: "sess-lms", agent: null, directory: "/tmp", model: null }
+  const ctx = createCallbackCtx({ chatId: 1017, data: "setmodel:#0:deadbeef" })
+  await callbackHandler(ctx)
+
+  assert.equal(mockDb.setChatBindingCalls.length, 1)
+  assert.equal(mockDb.setChatBindingCalls[0].binding.model, "lmstudio-model-q4")
+})
+
+test("callback setmodel:#index:fingerprint rejects stale LM Studio model list", async () => {
+  resetMocks()
+  mockModelDiscovery.modelsByCli.lmstudio = [
+    { slug: "lmstudio-model-q4", fingerprint: "cafebabe" },
+  ]
+  mockDb.binding = { cli: "lmstudio", session_id: "sess-lms-stale", agent: null, directory: "/tmp", model: null }
+  const ctx = createCallbackCtx({ chatId: 1018, data: "setmodel:#0:deadbeef" })
+  await callbackHandler(ctx)
+
+  assert.equal(mockDb.setChatBindingCalls.length, 0)
+  assert.ok(
+    ctx.callbackAnswers.some((a) => a?.show_alert === true),
+    "expected a show_alert when indexed LM Studio callback fingerprint is stale",
+  )
+})
+
 // ── AsyncGenerator consumer path (Claude streaming) ───────────────────────────
 // Chat IDs 3001–3006 are reserved for this section.
 // Events use the real claude.js format: { type:"text", text } / { type:"permission", requestId, toolName, toolInput, toolInputRaw }.
@@ -907,8 +961,26 @@ test("AsyncGenerator: text + result events → replyChunks with accumulated text
 
   const reply = ctx.replies.find((r) => r.text && r.text.includes("Hello"))
   assert.ok(reply, "expected a reply containing the accumulated text")
-  assert.ok(reply.text.includes("world"), "expected both text chunks joined in the reply")
+  assert.equal(reply.text, "Hello, world!", "expected text chunks concatenated without inserted separators")
   assert.equal(mockBackend.sendMessageCalls.length, 0, "Promise-path backend must not be called")
+})
+
+test("AsyncGenerator: token-sized text events → no artificial newlines inserted", async () => {
+  resetMocks()
+  activeGeneratorBackend = createMockGeneratorBackend([
+    { type: "text", text: "C" },
+    { type: "text", text: "iao" },
+    { type: "text", text: "!" },
+    { type: "text", text: " 👋" },
+    { type: "result", sessionId: "sess-gen-tokens", inputTokens: 5, outputTokens: 4 },
+  ])
+  mockDb.binding = { cli: "claude", session_id: "sess-gen-tokens", agent: null, directory: "/tmp" }
+  const ctx = createMockCtx({ chatId: 3007, text: "hi" })
+  await textHandler(ctx)
+
+  const reply = ctx.replies.find((r) => typeof r.text === "string" && r.text.includes("Ciao"))
+  assert.ok(reply, "expected a reply containing the reconstructed token stream")
+  assert.equal(reply.text, "Ciao! 👋", "token-sized chunks must be concatenated with no extra newlines")
 })
 
 test("AsyncGenerator: result.sessionId differs from binding → setChatBinding (compare-and-set)", async () => {

@@ -3,7 +3,7 @@ import { config } from "./config.js"
 import { getChatBinding, setChatBinding, clearChatBinding, recentSessions, sessionCountsByCli, recentWorkspaces, getCliSessionById, renameSession, upsertCliSession, getKiloBridgeSessions } from "./db.js"
 import { getBackend, supportedClis } from "./backends.js"
 import { refreshKiloMirror } from "./cli-scanner.js"
-import { getModelsForCli } from "./model-discovery.js"
+import { encodeModelCallbackSlug, getModelsForCli } from "./model-discovery.js"
 import { log, redactString } from "./log.js"
 import { generateSessionTitle } from "./session-title.js"
 import {
@@ -323,14 +323,12 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
     // exceed this (e.g., "dolphin-mistral-glm-4.7-flash-24b-venice-edition-...").
     // Use numeric index for LM Studio to avoid truncation ambiguity; the handler
     // resolves the index back to the full slug via getModelsForCli.
-    const MAX_CALLBACK_SLUG = 54 // 64 - len("setmodel:") - 1 byte safety
     const keyboard = new InlineKeyboard()
     const lines = [`Available models for ${cli}:`]
     const displayed = models.slice(0, MAX_MODELS_IN_KEYBOARD)
     for (const [i, m] of displayed.entries()) {
       lines.push(`${i + 1}. ${m.displayName}`)
-      const needsIndex = cli === "lmstudio" && m.slug.length > MAX_CALLBACK_SLUG
-      const cbData = needsIndex ? `setmodel:#${i}` : `setmodel:${m.slug}`
+      const cbData = `setmodel:${encodeModelCallbackSlug(cli, m.slug, i)}`
       keyboard.text(`${i + 1}. ${m.displayName}`, cbData).row()
     }
     if (models.length > MAX_MODELS_IN_KEYBOARD) {

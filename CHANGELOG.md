@@ -13,6 +13,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - unreleased
+
+### Added
+
+- **LM Studio backend** (#41–#44). Local LM Studio server (≥ 0.4.0) as a
+  privacy-first backend via its native REST API. Unlike exec-based backends,
+  LM Studio manages conversation history entirely server-side — the bridge
+  stores only an opaque `response_id` per session; no message content ever
+  lands in the local DB. Thread continuity is achieved via
+  `previous_response_id` in the POST body, so each reply picks up exactly
+  where the previous one left off without replaying history. Named SSE events
+  (`message.delta`, `reasoning.delta`, `tool_call.*`, `chat.end`) are streamed
+  and forwarded to Telegram in real time. Optional auth via
+  `LMSTUDIO_API_TOKEN`. Always marked as supported; fails gracefully at
+  runtime if LM Studio is not running. A one-time `VACUUM` migration purges
+  any legacy `lmstudio_messages` data on upgrade.
+
+- **LM Studio model selection** (#43). `/models` lists available LLM models
+  fetched from `GET /api/v1/models` as an inline keyboard. `/model <name>`
+  sets the model for the current session. Same commands already supported for
+  Claude Code and Codex.
+
+### Fixed
+
+- **LM Studio callback data truncation** (#46). Telegram caps `callback_data`
+  at 64 bytes. Long LM Studio model slugs (e.g.
+  `dolphin-mistral-glm-4.7-flash-24b-venice-edition`) exceeded this limit.
+  Model keys whose `slug.length` exceeds 54 characters (`MAX_CALLBACK_SLUG`)
+  are now encoded as `#<index>:<sha256[:8]>`. `resolveIndexedModelSlug`
+  validates the fingerprint and returns a structured `{ ok, reason, slug }`
+  result: `"invalid_token"` (bad format) and `"unavailable"` (model list
+  unavailable) produce differentiated alert text; `"fingerprint_mismatch"` and
+  `"index_out_of_range"` fall back to the generic "Model list changed" alert.
+  Legacy `#<index>` tokens (no fingerprint, from before PR #46) are still
+  accepted for backward compatibility.
+
+- **LM Studio SSE stream edge cases** (#47). Replaced the line-by-line SSE
+  parser with a block-based parser (`parseSseEventBlock`) that correctly
+  handles multi-line `data:` payloads and arbitrary TCP chunk boundaries.
+  Added `extractMessageText`/`extractMessageTextFromOutput` helpers for
+  flexible content shapes. Fixed `textParts.join("")` (was `join("\n\n")`) to
+  eliminate spurious blank lines between response chunks.
+
 ## [0.4.1] - 2026-04-10
 
 ### Added
@@ -331,5 +374,11 @@ Thanks to [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans) a
 own machines and filing the first real-world bug reports — exactly the feedback loop
 that makes an open source project actually useful.
 
-[Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.1...HEAD
+[0.5.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.4...v0.4.0
+[0.3.4]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/legate-dev/telegram-ai-bridge/releases/tag/v0.3.1

@@ -250,6 +250,7 @@ async function main() {
       { command: "abort", description: "Abort current session" },
       { command: "cleanup", description: "Preview/delete old bridge sessions" },
       { command: "detach", description: "Unbind current session" },
+      { command: "restart", description: "Restart the bridge (requires a supervisor like launchd)" },
     ])
   } catch (error) {
     log.warn("startup", "telegram.command_registration_failed", {

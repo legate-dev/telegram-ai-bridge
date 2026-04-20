@@ -258,6 +258,32 @@ test("/agent shows current agent when no session is bound", async () => {
   assert.ok(capturedReplies[0].includes("Current chat agent:"), "should show current agent when unbound")
 })
 
+// ── /restart ──────────────────────────────────────────────────────────────
+
+test("/restart replies then sends SIGINT to the current process", async () => {
+  capturedReplies.length = 0
+
+  const killCalls = []
+  const originalKill = process.kill
+  process.kill = (pid, signal) => { killCalls.push({ pid, signal }) }
+
+  try {
+    await bot.handlers.restart(makeCtx(1, ""))
+
+    assert.equal(capturedReplies.length, 1, "restart must reply exactly once")
+    assert.ok(capturedReplies[0].toLowerCase().includes("restart"), "reply must mention restart")
+    assert.equal(killCalls.length, 0, "kill must be deferred so the reply has time to flush")
+
+    await new Promise((resolve) => setTimeout(resolve, 700))
+
+    assert.equal(killCalls.length, 1, "kill must fire after the scheduled delay")
+    assert.equal(killCalls[0].pid, process.pid, "signal must target this process")
+    assert.equal(killCalls[0].signal, "SIGINT", "signal must be SIGINT to reuse graceful shutdown")
+  } finally {
+    process.kill = originalKill
+  }
+})
+
 // ── /rename ───────────────────────────────────────────────────────────────
 
 test("/rename shows usage when called without argument", async () => {

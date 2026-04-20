@@ -61,7 +61,7 @@ await mock.module("../src/telegram-utils.js", {
 
 await mock.module("../src/config.js", {
   namedExports: {
-    config: { defaultDirectory: "/tmp", bridgeAgentFallbacks: [], logLevel: "error" },
+    config: { defaultDirectory: "/tmp", bridgeAgentFallbacks: [], logLevel: "error", bridgeRestartDelayMs: 500 },
   },
 })
 
@@ -264,23 +264,33 @@ test("/restart replies then sends SIGINT to the current process", async () => {
   capturedReplies.length = 0
 
   const killCalls = []
+  const scheduledTimers = []
+
   const originalKill = process.kill
+  const originalSetTimeout = globalThis.setTimeout
   process.kill = (pid, signal) => { killCalls.push({ pid, signal }) }
+  globalThis.setTimeout = (fn, ms) => {
+    scheduledTimers.push({ fn, ms })
+    return 0
+  }
 
   try {
     await bot.handlers.restart(makeCtx(1, ""))
 
     assert.equal(capturedReplies.length, 1, "restart must reply exactly once")
     assert.ok(capturedReplies[0].toLowerCase().includes("restart"), "reply must mention restart")
-    assert.equal(killCalls.length, 0, "kill must be deferred so the reply has time to flush")
+    assert.equal(killCalls.length, 0, "kill must be deferred, not called synchronously")
+    assert.equal(scheduledTimers.length, 1, "exactly one timer must be scheduled")
+    assert.equal(scheduledTimers[0].ms, 500, "delay must match BRIDGE_RESTART_DELAY_MS default (500)")
 
-    await new Promise((resolve) => setTimeout(resolve, 700))
+    scheduledTimers[0].fn()
 
-    assert.equal(killCalls.length, 1, "kill must fire after the scheduled delay")
+    assert.equal(killCalls.length, 1, "kill must fire when the scheduled callback runs")
     assert.equal(killCalls[0].pid, process.pid, "signal must target this process")
     assert.equal(killCalls[0].signal, "SIGINT", "signal must be SIGINT to reuse graceful shutdown")
   } finally {
     process.kill = originalKill
+    globalThis.setTimeout = originalSetTimeout
   }
 })
 

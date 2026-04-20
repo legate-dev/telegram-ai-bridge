@@ -304,7 +304,7 @@ export function setupCommands(bot, kilo, agentRegistry) {
     // Delay the signal briefly so the Telegram reply flushes before the
     // shutdown handler tears down the bot. SIGINT reuses installShutdownHandlers
     // (graceful bot stop, kilo server stop, log flush) instead of a naked exit.
-    setTimeout(() => process.kill(process.pid, "SIGINT"), 500)
+    setTimeout(() => process.kill(process.pid, "SIGINT"), config.bridgeRestartDelayMs)
   })
 
   bot.command("models", async (ctx) => {

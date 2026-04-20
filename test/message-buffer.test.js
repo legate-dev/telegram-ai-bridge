@@ -93,11 +93,15 @@ const DEBOUNCE_MS = config.bridgeMessageDebounceMs
 
 // ── Wire up handlers once ─────────────────────────────────────────────────────
 
-const fakeRegistry = Promise.resolve({
+const fakeRegistrySnapshot = {
   bridgeDefault: "default-agent",
   primaryAgents: ["default-agent"],
   bridgeAgentFallbacks: [],
-})
+}
+const fakeRegistry = {
+  get: () => fakeRegistrySnapshot,
+  refresh: async () => fakeRegistrySnapshot,
+}
 
 const bot = makeMockBot()
 setupHandlers(bot, null, fakeRegistry)

@@ -192,11 +192,15 @@ const {
 
 // ── Wire up handlers once ────────────────────────────────────────────────────
 
-const fakeRegistry = Promise.resolve({
+const fakeRegistrySnapshot = {
   bridgeDefault: "default-agent",
   primaryAgents: ["default-agent"],
   bridgeAgentFallbacks: [],
-})
+}
+const fakeRegistry = {
+  get: () => fakeRegistrySnapshot,
+  refresh: async () => fakeRegistrySnapshot,
+}
 
 const bot = makeMockBot()
 setupHandlers(bot, null, fakeRegistry)
@@ -338,7 +342,7 @@ test("pendingCustomPath dispatches to createNewSession on the single-CLI fast pa
     1,
     "createNewSession must be called exactly once on the single-CLI fast path",
   )
-  // createNewSession signature: (ctx, cli, directory, agentRegistryPromise)
+  // createNewSession signature: (ctx, cli, directory, agentRegistry)
   const [, cli, directory] = mockCreateNewSessionCalls[0]
   assert.equal(cli, "claude")
   assert.equal(directory, "/tmp/single-cli/workspace")

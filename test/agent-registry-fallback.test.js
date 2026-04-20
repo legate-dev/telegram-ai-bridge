@@ -1,19 +1,11 @@
 import { mock, test } from "node:test"
 import assert from "node:assert/strict"
+import { writeFile, rm, mkdtemp } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 
 process.env.TELEGRAM_BOT_TOKEN ??= "123456:TESTTOKEN"
 process.env.LOG_LEVEL ??= "error"
-
-// Mock loadAgentRegistry to reject, simulating a missing kilo config file
-await mock.module("../src/agent-registry.js", {
-  namedExports: {
-    loadAgentRegistry: async () => {
-      const err = new Error("ENOENT: no such file or directory")
-      err.code = "ENOENT"
-      throw err
-    },
-  },
-})
 
 const warnEvents = []
 
@@ -41,7 +33,6 @@ await mock.module("../src/config.js", {
   },
 })
 
-// Minimal db mock
 await mock.module("../src/db.js", {
   namedExports: {
     getChatBinding: () => null,
@@ -104,25 +95,11 @@ await mock.module("../src/cli-scanner.js", {
   },
 })
 
-// Build the agentRegistryPromise using the same pattern as src/index.js
-const { loadAgentRegistry } = await import("../src/agent-registry.js")
-const { log } = await import("../src/log.js")
+const { createAgentRegistry } = await import("../src/agent-registry.js")
 const { config } = await import("../src/config.js")
 
-const agentRegistryPromise = loadAgentRegistry(config).catch((error) => {
-  log.warn("agent-registry", "load_failed_using_fallback", {
-    config_path: config.kiloConfigPath,
-    error: error.message,
-    code: error.code,
-    persist: true,
-  })
-  const fallbackBridgeDefault = config.bridgeDefaultAgent || ""
-  return {
-    primaryAgents: fallbackBridgeDefault ? [fallbackBridgeDefault] : [],
-    configuredDefault: "",
-    bridgeDefault: fallbackBridgeDefault,
-  }
-})
+const agentRegistry = createAgentRegistry(config)
+await agentRegistry.refresh()
 
 const { setupCommands } = await import("../src/commands.js")
 
@@ -151,19 +128,18 @@ const fakeKilo = {
 }
 
 const bot = makeMockBot()
-setupCommands(bot, fakeKilo, agentRegistryPromise)
+setupCommands(bot, fakeKilo, agentRegistry)
 
 // ── Fallback registry shape ──────────────────────────────────────────────────
 
-test("agentRegistryPromise resolves to fallback registry when loadAgentRegistry rejects", async () => {
-  const registry = await agentRegistryPromise
+test("agentRegistry.get() returns fallback registry when initial refresh fails", () => {
+  const registry = agentRegistry.get()
   assert.deepEqual(registry.primaryAgents, ["codex"])
   assert.equal(registry.configuredDefault, "")
   assert.equal(registry.bridgeDefault, "codex")
 })
 
-test("agentRegistryPromise fallback emits a warn log event with persist: true", async () => {
-  await agentRegistryPromise
+test("initial refresh failure emits a warn log event with persist: true", () => {
   const event = warnEvents.find((e) => e.event === "load_failed_using_fallback")
   assert.ok(event, "warn event load_failed_using_fallback should be emitted")
   assert.equal(event.domain, "agent-registry")
@@ -185,10 +161,44 @@ test("/start replies with a non-empty string when kilo config is absent (no sile
 
 test("/agents shows 'not available' message for codex session with empty fallback registry", async () => {
   capturedReplies.length = 0
-  // With no binding, supportsAgentSelection returns true (null cli treated as kilo-compatible)
-  // The registry has empty primaryAgents, so the reply lists agents (empty) with the bridge default
   await bot.handlers.agents(makeCtx())
   assert.ok(capturedReplies.length > 0, "ctx.reply must be called")
   assert.ok(capturedReplies[0].includes("Bridge default agent:"), "reply must show bridge default agent")
   assert.ok(capturedReplies[0].includes("Available primary agents:"), "reply must list available agents section")
+})
+
+// ── refresh() keeps last-good registry when reload fails ─────────────────────
+
+test("refresh() retains last-good registry when a subsequent reload fails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "tbridge-agent-keeplast-"))
+  const configPath = join(dir, "kilo.json")
+  await writeFile(configPath, JSON.stringify({
+    agent: { primary1: {}, primary2: { mode: "chat" } },
+    default_agent: "primary1",
+  }))
+
+  const scopedConfig = {
+    kiloConfigPath: configPath,
+    bridgeDefaultAgent: "primary1",
+  }
+  const scoped = createAgentRegistry(scopedConfig)
+
+  const first = await scoped.refresh()
+  assert.deepEqual(first.primaryAgents, ["primary1", "primary2"])
+  assert.equal(first.bridgeDefault, "primary1")
+
+  // Remove the config file so the next refresh fails.
+  await rm(dir, { recursive: true })
+
+  warnEvents.length = 0
+  const second = await scoped.refresh()
+
+  assert.deepEqual(second.primaryAgents, ["primary1", "primary2"], "last-good primaryAgents must be retained")
+  assert.equal(second.bridgeDefault, "primary1", "last-good bridgeDefault must be retained")
+  assert.strictEqual(scoped.get(), second, "get() must return the same reference refresh() resolved with")
+
+  const warn = warnEvents.find((e) => e.event === "refresh_failed_keeping_last")
+  assert.ok(warn, "warn event refresh_failed_keeping_last must be emitted")
+  assert.equal(warn.meta.code, "ENOENT")
+  assert.equal(warn.meta.persist, true)
 })

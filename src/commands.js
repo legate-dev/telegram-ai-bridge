@@ -292,6 +292,21 @@ export function setupCommands(bot, kilo, agentRegistry) {
     await replyChunks(ctx, `Preferred agent set to ${requestedAgent}. New messages will use it.`)
   })
 
+  bot.command("restart", async (ctx) => {
+    log.info("telegram.command", "restart.requested", {
+      chat_id: String(ctx.chat.id),
+      persist: true,
+    })
+    await replyChunks(
+      ctx,
+      "Restarting bridge… should be back online in ~2s if a process supervisor (launchd/pm2/systemd) is running. Otherwise the bot stays offline.",
+    )
+    // Delay the signal briefly so the Telegram reply flushes before the
+    // shutdown handler tears down the bot. SIGINT reuses installShutdownHandlers
+    // (graceful bot stop, kilo server stop, log flush) instead of a naked exit.
+    setTimeout(() => process.kill(process.pid, "SIGINT"), config.bridgeRestartDelayMs)
+  })
+
   bot.command("models", async (ctx) => {
     const binding = getChatBinding(ctx.chat.id)
     if (!hasBoundSession(binding)) {

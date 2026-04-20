@@ -74,6 +74,7 @@ Called by the `perm:` callback to write a `control_response` to the backend's st
 | `/abort` | none | Aborts the current bound session if backend supports it |
 | `/cleanup` | none or `confirm` | Previews bridge-created Kilo sessions to delete; only `confirm` performs deletion. Bridge ownership is determined by the deterministic `source='bridge'` flag set at session creation, NOT by title pattern. Sessions with more user turns than `KILO_CLEANUP_MAX_ROUNDS` are protected. The handler triggers a fresh `scanAll()` so preview and confirm always see the same state. |
 | `/detach` | none | Removes the current chat binding |
+| `/restart` | none | Triggers graceful shutdown via `SIGINT`. A process supervisor (launchd/pm2/systemd) must respawn the bridge; otherwise it stays offline. The reply is scheduled before the signal via `BRIDGE_RESTART_DELAY_MS` (default 500) so Telegram can flush it. |
 
 ## Session-binding contract
 

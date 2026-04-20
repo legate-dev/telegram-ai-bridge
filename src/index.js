@@ -1,5 +1,5 @@
 import { Bot, GrammyError, HttpError } from "grammy"
-import { loadAgentRegistry } from "./agent-registry.js"
+import { createAgentRegistry } from "./agent-registry.js"
 import { scanAll, startWatcher } from "./cli-scanner.js"
 import { config } from "./config.js"
 import { KiloClient } from "./kilo-client.js"
@@ -13,20 +13,7 @@ import { closeLogStore, pruneLogStore, flushLogStore } from "./log-store.js"
 import { startKiloServer, stopKiloServer } from "./kilo-server.js"
 
 const bot = new Bot(config.telegramBotToken)
-const agentRegistryPromise = loadAgentRegistry(config).catch((error) => {
-  log.warn("agent-registry", "load_failed_using_fallback", {
-    config_path: config.kiloConfigPath,
-    error: error.message,
-    code: error.code,
-    persist: true,
-  })
-  const fallbackBridgeDefault = config.bridgeDefaultAgent || ""
-  return {
-    primaryAgents: fallbackBridgeDefault ? [fallbackBridgeDefault] : [],
-    configuredDefault: "",
-    bridgeDefault: fallbackBridgeDefault,
-  }
-})
+const agentRegistry = createAgentRegistry(config)
 
 // ── Auth middleware ──
 
@@ -216,9 +203,14 @@ async function main() {
   registerBackend(new ClaudeBackend())
   registerBackend(new LmStudioBackend())
 
+  const initialRegistry = await agentRegistry.refresh()
+  if (agentRegistry.hasLoaded()) {
+    log.info("startup", "agent_registry.loaded", { agent_count: initialRegistry.primaryAgents.length })
+  }
+
   // Mount routes (must happen before bot.start())
-  setupCommands(bot, kilo, agentRegistryPromise)
-  setupHandlers(bot, kilo, agentRegistryPromise)
+  setupCommands(bot, kilo, agentRegistry)
+  setupHandlers(bot, kilo, agentRegistry)
 
   const pruned = pruneLogStore()
   if (pruned) {
@@ -274,10 +266,6 @@ async function main() {
     log_file_path: config.logFilePath,
     log_db_path: config.logDbPath,
   })
-
-  agentRegistryPromise
-    .then((registry) => log.info("startup", "agent_registry.loaded", { agent_count: registry.primaryAgents.length }))
-    .catch((error) => log.error("startup", "agent_registry.failed", { error, persist: true }))
 
   if (!authorizedUserId()) {
     log.info("startup", "bootstrap_mode.enabled", { persist: true })

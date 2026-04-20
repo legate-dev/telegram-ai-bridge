@@ -147,11 +147,15 @@ function makeCtx(chatId = 1, match = "") {
   }
 }
 
-const fakeRegistry = Promise.resolve({
+const fakeRegistrySnapshot = {
   bridgeDefault: "claude-sonnet",
   primaryAgents: ["claude-sonnet", "gemini-pro"],
   bridgeAgentFallbacks: [],
-})
+}
+const fakeRegistry = {
+  get: () => fakeRegistrySnapshot,
+  refresh: async () => fakeRegistrySnapshot,
+}
 
 const fakeKilo = {
   listSessions: async () => [],

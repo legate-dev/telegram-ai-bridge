@@ -290,7 +290,7 @@ async function surfacePermission(ctx, permissionData, chatKey, binding, agent, b
   await ctx.reply("Choose an action:", { reply_markup: keyboard })
 }
 
-export function setupHandlers(bot, kilo, agentRegistryPromise) {
+export function setupHandlers(bot, kilo, agentRegistry) {
   // ── Unified inline keyboard callbacks ──
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data
@@ -304,7 +304,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
         return
       }
       await ctx.answerCallbackQuery(`Creating ${cli} session...`)
-      await createNewSession(ctx, cli, directory, agentRegistryPromise)
+      await createNewSession(ctx, cli, directory, agentRegistry)
       return
     }
 
@@ -319,7 +319,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       const clis = supportedClis()
       await ctx.answerCallbackQuery()
       if (clis.length === 1) {
-        await createNewSession(ctx, clis[0], workspace, agentRegistryPromise)
+        await createNewSession(ctx, clis[0], workspace, agentRegistry)
         return
       }
       const keyboard = new InlineKeyboard()
@@ -776,7 +776,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
     await ctx.answerCallbackQuery(`Bound to [${row.cli}] session`)
 
     const backend = getBackend(row.cli)
-    const registry = await agentRegistryPromise
+    const registry = agentRegistry.get()
     const existing = getChatBinding(ctx.chat.id)
     const agent = resolvePreferredAgent(existing, registry)
 
@@ -859,7 +859,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       return
     }
 
-    const registry = await agentRegistryPromise
+    const registry = agentRegistry.get()
     const agent = resolvePreferredAgent(binding, registry)
     const traceId = randomUUID()
 
@@ -1250,7 +1250,7 @@ export function setupHandlers(bot, kilo, agentRegistryPromise) {
       const directory = parsed.path
       const clis = supportedClis()
       if (clis.length === 1) {
-        await createNewSession(ctx, clis[0], directory, agentRegistryPromise)
+        await createNewSession(ctx, clis[0], directory, agentRegistry)
       } else {
         const hash = registerPath(directory)
         const keyboard = new InlineKeyboard()

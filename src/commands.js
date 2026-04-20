@@ -84,9 +84,9 @@ function classifyCleanupCandidates(bridgeSessions, statuses) {
   return { eligible, protectedSessions }
 }
 
-export async function createNewSession(ctx, cli, directory, agentRegistryPromise) {
+export async function createNewSession(ctx, cli, directory, agentRegistry) {
   const existing = getChatBinding(ctx.chat.id)
-  const registry = await agentRegistryPromise
+  const registry = agentRegistry.get()
   const agent = resolvePreferredAgent(existing, registry)
   const backend = getBackend(cli)
 
@@ -168,10 +168,10 @@ export async function createNewSession(ctx, cli, directory, agentRegistryPromise
   )
 }
 
-export function setupCommands(bot, kilo, agentRegistryPromise) {
+export function setupCommands(bot, kilo, agentRegistry) {
   bot.command("start", async (ctx) => {
     const binding = getChatBinding(ctx.chat.id)
-    const registry = await agentRegistryPromise
+    const registry = agentRegistry.get()
     const preferredAgent = resolvePreferredAgent(binding, registry)
     const lines = ["Telegram Bridge online."]
     if (!hasBoundSession(binding)) {
@@ -233,7 +233,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
       return
     }
 
-    const registry = await agentRegistryPromise
+    const registry = await agentRegistry.refresh()
     const preferredAgent = resolvePreferredAgent(binding, registry)
 
     const lines = [
@@ -256,7 +256,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
 
     const requestedAgent = ctx.match?.trim()
     if (!requestedAgent) {
-      const registry = await agentRegistryPromise
+      const registry = await agentRegistry.refresh()
       const preferredAgent = resolvePreferredAgent(binding, registry)
       await replyChunks(
         ctx,
@@ -268,7 +268,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
       return
     }
 
-    const registry = await agentRegistryPromise
+    const registry = await agentRegistry.refresh()
     if (!registry.primaryAgents.includes(requestedAgent)) {
       await replyChunks(
         ctx,
@@ -611,7 +611,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
     // /new <cli> [path] → skip workspace picker (existing shortcut behavior)
     if (requestedCli) {
       const directory = resolveDirectory(pathArg, ctx.chat.id)
-      await createNewSession(ctx, requestedCli, directory, agentRegistryPromise)
+      await createNewSession(ctx, requestedCli, directory, agentRegistry)
       return
     }
 
@@ -626,7 +626,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
         }
         await ctx.reply(`Pick a CLI for ${displayPath(directory)}:`, { reply_markup: keyboard })
       } else {
-        await createNewSession(ctx, clis[0], directory, agentRegistryPromise)
+        await createNewSession(ctx, clis[0], directory, agentRegistry)
       }
       return
     }
@@ -643,7 +643,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
         }
         await ctx.reply("Pick a CLI for the new session:", { reply_markup: keyboard })
       } else {
-        await createNewSession(ctx, clis[0], directory, agentRegistryPromise)
+        await createNewSession(ctx, clis[0], directory, agentRegistry)
       }
       return
     }
@@ -713,7 +713,7 @@ export function setupCommands(bot, kilo, agentRegistryPromise) {
 
   bot.command("status", async (ctx) => {
     const binding = getChatBinding(ctx.chat.id)
-    const registry = await agentRegistryPromise
+    const registry = agentRegistry.get()
     const preferredAgent = resolvePreferredAgent(binding, registry)
 
     if (!hasBoundSession(binding)) {

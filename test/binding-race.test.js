@@ -119,11 +119,15 @@ const fakeBot = {
   on: (event, handler) => { eventHandlers[event] = handler },
 }
 
-const fakeRegistry = Promise.resolve({
+const fakeRegistrySnapshot = {
   bridgeDefault: "default-agent",
   primaryAgents: ["default-agent"],
   bridgeAgentFallbacks: [],
-})
+}
+const fakeRegistry = {
+  get: () => fakeRegistrySnapshot,
+  refresh: async () => fakeRegistrySnapshot,
+}
 
 const fakeKilo = { getAllStatuses: async () => ({}) }
 

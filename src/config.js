@@ -73,7 +73,7 @@ export const config = {
   // Delay, in milliseconds, between the /restart reply and the SIGINT that
   // triggers graceful shutdown. Gives Telegram time to flush the reply before
   // the bot stops. Tunable for slow networks.
-  bridgeRestartDelayMs: parseInt(value("BRIDGE_RESTART_DELAY_MS", "500"), 10),
+  bridgeRestartDelayMs: parseInt(value("BRIDGE_RESTART_DELAY_MS", "500"), 10) || 500,
   // Delay, in milliseconds, before dispatching buffered bridge message updates. This debounces
   // bursts of incoming content so rapid partial updates can be coalesced into a single send.
   bridgeMessageDebounceMs: parseInt(value("BRIDGE_MESSAGE_DEBOUNCE_MS", "1500"), 10),

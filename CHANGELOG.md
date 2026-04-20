@@ -13,7 +13,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0] - unreleased
+## [0.6.0] - 2026-04-20
+
+### Added
+
+- **`/restart` command** (#55). Operator-facing Telegram command that
+  triggers graceful shutdown via `SIGINT`, letting an external process
+  supervisor (launchd, pm2, systemd) respawn the bridge. Reuses the existing
+  `installShutdownHandlers` path (bot stop, kilo server stop, log flush) so
+  no separate exit logic runs. A 500 ms delay between the reply and the
+  signal gives Telegram time to flush the confirmation message; the delay
+  is tunable via `BRIDGE_RESTART_DELAY_MS` (falls back to 500 on invalid
+  input, matching the repo pattern for operational timing knobs). Documented
+  under the Telegram command contract.
+
+- **Dynamic Kilo agent registry** (#54). `/agents` and `/agent` now reload
+  `opencode.json` on every invocation via a new `createAgentRegistry(config)`
+  that exposes `{ get, refresh, hasLoaded }`. On refresh failure the last
+  successful snapshot is retained, so a broken Kilo config never leaves the
+  bridge with an empty registry. Concurrent `/agents` and `/agent`
+  invocations coalesce onto a single in-flight read to prevent a stale read
+  from overwriting a newer one. Warning output is deduped so a persistently
+  broken config does not spam the persisted log store: the first failure
+  after a successful load is persisted, subsequent failures while still
+  broken log with `persist: false`, and the initial fallback warning is
+  emitted once rather than per `/agents` call.
+
+### Changed
+
+- **Dependencies**. `dotenv` 17.4.1 → 17.4.2 (#53). `better-sqlite3`
+  12.8.0 → 12.9.0 (#52, bundles SQLite 3.53.0). CI release workflow now
+  uses `softprops/action-gh-release` v3 (#51), which moves the action
+  runtime to Node 24 on GitHub-hosted runners.
+
+## [0.5.0] - 2026-04-12
 
 ### Added
 
@@ -374,7 +407,8 @@ Thanks to [@RaspberriesinBlueJeans](https://github.com/RaspberriesinBlueJeans) a
 own machines and filing the first real-world bug reports — exactly the feedback loop
 that makes an open source project actually useful.
 
-[Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/legate-dev/telegram-ai-bridge/compare/v0.3.4...v0.4.0

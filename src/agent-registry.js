@@ -37,6 +37,7 @@ export async function loadAgentRegistry(config) {
 export function createAgentRegistry(config) {
   let current = fallbackRegistry(config.bridgeDefaultAgent)
   let loadedOnce = false
+  let fallbackWarned = false
 
   async function refresh() {
     try {
@@ -44,16 +45,19 @@ export function createAgentRegistry(config) {
       loadedOnce = true
       return current
     } catch (error) {
-      log.warn(
-        "agent-registry",
-        loadedOnce ? "refresh_failed_keeping_last" : "load_failed_using_fallback",
-        {
-          config_path: config.kiloConfigPath,
-          error: error.message,
-          code: error.code,
-          persist: true,
-        },
-      )
+      const meta = {
+        config_path: config.kiloConfigPath,
+        error: error.message,
+        code: error.code,
+      }
+      if (loadedOnce) {
+        log.warn("agent-registry", "refresh_failed_keeping_last", { ...meta, persist: true })
+      } else if (!fallbackWarned) {
+        log.warn("agent-registry", "load_failed_using_fallback", { ...meta, persist: true })
+        fallbackWarned = true
+      } else {
+        log.warn("agent-registry", "refresh_failed_still_fallback", { ...meta, persist: false })
+      }
       return current
     }
   }
@@ -62,5 +66,9 @@ export function createAgentRegistry(config) {
     return current
   }
 
-  return { get, refresh }
+  function hasLoaded() {
+    return loadedOnce
+  }
+
+  return { get, refresh, hasLoaded }
 }

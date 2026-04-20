@@ -204,7 +204,9 @@ async function main() {
   registerBackend(new LmStudioBackend())
 
   const initialRegistry = await agentRegistry.refresh()
-  log.info("startup", "agent_registry.loaded", { agent_count: initialRegistry.primaryAgents.length })
+  if (agentRegistry.hasLoaded()) {
+    log.info("startup", "agent_registry.loaded", { agent_count: initialRegistry.primaryAgents.length })
+  }
 
   // Mount routes (must happen before bot.start())
   setupCommands(bot, kilo, agentRegistry)

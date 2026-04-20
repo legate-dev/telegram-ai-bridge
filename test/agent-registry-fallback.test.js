@@ -167,6 +167,29 @@ test("/agents shows 'not available' message for codex session with empty fallbac
   assert.ok(capturedReplies[0].includes("Available primary agents:"), "reply must list available agents section")
 })
 
+// ── repeated refresh while in fallback does not re-emit load_failed_using_fallback ──
+
+test("repeated refresh() while never-loaded emits load_failed_using_fallback once, then refresh_failed_still_fallback", async () => {
+  const scoped = createAgentRegistry({
+    kiloConfigPath: "/nonexistent/opencode.json",
+    bridgeDefaultAgent: "codex",
+  })
+
+  warnEvents.length = 0
+  await scoped.refresh()
+  await scoped.refresh()
+  await scoped.refresh()
+
+  const firstWarns = warnEvents.filter((e) => e.event === "load_failed_using_fallback")
+  const repeatWarns = warnEvents.filter((e) => e.event === "refresh_failed_still_fallback")
+
+  assert.equal(firstWarns.length, 1, "load_failed_using_fallback must be emitted exactly once")
+  assert.equal(firstWarns[0].meta.persist, true, "first-time warning must persist")
+  assert.equal(repeatWarns.length, 2, "subsequent failures must emit refresh_failed_still_fallback")
+  assert.ok(repeatWarns.every((e) => e.meta.persist === false), "repeat failures must not persist (avoid log spam)")
+  assert.equal(scoped.hasLoaded(), false, "hasLoaded() stays false while never successfully loaded")
+})
+
 // ── refresh() keeps last-good registry when reload fails ─────────────────────
 
 test("refresh() retains last-good registry when a subsequent reload fails", async () => {
@@ -186,6 +209,7 @@ test("refresh() retains last-good registry when a subsequent reload fails", asyn
   const first = await scoped.refresh()
   assert.deepEqual(first.primaryAgents, ["primary1", "primary2"])
   assert.equal(first.bridgeDefault, "primary1")
+  assert.equal(scoped.hasLoaded(), true, "hasLoaded() must be true after a successful refresh")
 
   // Remove the config file so the next refresh fails.
   await rm(dir, { recursive: true })

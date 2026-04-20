@@ -38,11 +38,14 @@ export function createAgentRegistry(config) {
   let current = fallbackRegistry(config.bridgeDefaultAgent)
   let loadedOnce = false
   let fallbackWarned = false
+  let lastRefreshOk = false
+  let inFlight = null
 
-  async function refresh() {
+  async function doRefresh() {
     try {
       current = await loadAgentRegistry(config)
       loadedOnce = true
+      lastRefreshOk = true
       return current
     } catch (error) {
       const meta = {
@@ -51,15 +54,32 @@ export function createAgentRegistry(config) {
         code: error.code,
       }
       if (loadedOnce) {
-        log.warn("agent-registry", "refresh_failed_keeping_last", { ...meta, persist: true })
+        // Persist only the transition from OK to broken; subsequent failures
+        // while still broken use persist:false to avoid log-store spam when
+        // /agents or /agent is invoked repeatedly against a broken config.
+        log.warn("agent-registry", "refresh_failed_keeping_last", { ...meta, persist: lastRefreshOk })
       } else if (!fallbackWarned) {
         log.warn("agent-registry", "load_failed_using_fallback", { ...meta, persist: true })
         fallbackWarned = true
       } else {
         log.warn("agent-registry", "refresh_failed_still_fallback", { ...meta, persist: false })
       }
+      lastRefreshOk = false
       return current
     }
+  }
+
+  function refresh() {
+    // Coalesce concurrent callers onto the same in-flight read so two rapid
+    // /agents or /agent invocations cannot race and overwrite `current` with
+    // a stale snapshot.
+    if (inFlight) return inFlight
+    const p = doRefresh()
+    inFlight = p
+    p.finally(() => {
+      if (inFlight === p) inFlight = null
+    })
+    return p
   }
 
   function get() {

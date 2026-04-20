@@ -226,3 +226,67 @@ test("refresh() retains last-good registry when a subsequent reload fails", asyn
   assert.equal(warn.meta.code, "ENOENT")
   assert.equal(warn.meta.persist, true)
 })
+
+// ── Persist dedup for refresh_failed_keeping_last ────────────────────────────
+
+test("refresh_failed_keeping_last persists only on the OK\u2192broken transition", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "tbridge-agent-persist-"))
+  const configPath = join(dir, "kilo.json")
+  await writeFile(configPath, JSON.stringify({
+    agent: { primary1: {} },
+    default_agent: "primary1",
+  }))
+
+  const scoped = createAgentRegistry({
+    kiloConfigPath: configPath,
+    bridgeDefaultAgent: "primary1",
+  })
+
+  await scoped.refresh()
+  await rm(dir, { recursive: true })
+
+  warnEvents.length = 0
+  await scoped.refresh()
+  await scoped.refresh()
+  await scoped.refresh()
+
+  const warns = warnEvents.filter((e) => e.event === "refresh_failed_keeping_last")
+  assert.equal(warns.length, 3, "every failure must still emit a warning for observability")
+  assert.equal(warns[0].meta.persist, true, "first failure after a successful load must persist (OK\u2192broken transition)")
+  assert.equal(warns[1].meta.persist, false, "consecutive failures must not persist (avoid log-store spam)")
+  assert.equal(warns[2].meta.persist, false, "consecutive failures must not persist (avoid log-store spam)")
+})
+
+// ── Concurrent refresh() coalescing ──────────────────────────────────────────
+
+test("concurrent refresh() calls coalesce onto the same in-flight promise", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "tbridge-agent-inflight-"))
+  const configPath = join(dir, "kilo.json")
+  await writeFile(configPath, JSON.stringify({
+    agent: { primary1: {} },
+    default_agent: "primary1",
+  }))
+
+  const scoped = createAgentRegistry({
+    kiloConfigPath: configPath,
+    bridgeDefaultAgent: "primary1",
+  })
+
+  const p1 = scoped.refresh()
+  const p2 = scoped.refresh()
+  const p3 = scoped.refresh()
+
+  assert.strictEqual(p1, p2, "concurrent refreshes must return the same in-flight promise")
+  assert.strictEqual(p2, p3, "concurrent refreshes must return the same in-flight promise")
+
+  const [r1, r2] = await Promise.all([p1, p2])
+  assert.deepEqual(r1.primaryAgents, ["primary1"])
+  assert.strictEqual(r1, r2, "coalesced callers must receive the same snapshot")
+
+  // After the in-flight promise settles, a subsequent refresh must start a new one.
+  const p4 = scoped.refresh()
+  assert.notStrictEqual(p4, p1, "a new refresh after settle must not reuse the old in-flight promise")
+  await p4
+
+  await rm(dir, { recursive: true })
+})
